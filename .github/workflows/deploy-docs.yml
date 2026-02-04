@@ -12,6 +12,7 @@ on:
       - 'docs/**'
       - 'website/**'
       - '.github/workflows/deploy-docs.yml'
+  merge_group:
   workflow_dispatch:
 
 permissions:
