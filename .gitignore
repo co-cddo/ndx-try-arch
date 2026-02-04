@@ -32,6 +32,14 @@ logs/
 node_modules/
 npm-debug.log*
 
+# Docusaurus website
+website/node_modules/
+website/build/
+website/.docusaurus/
+website/.cache-loader/
+website/docs/
+website/blog/
+
 # Python (if any tooling added)
 __pycache__/
 *.py[cod]
