@@ -1,6 +1,12 @@
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import {execSync} from 'child_process';
+
+// Get build info
+const gitSha = process.env.GITHUB_SHA || execSync('git rev-parse HEAD').toString().trim();
+const gitShaShort = gitSha.slice(0, 7);
+const buildDate = new Date().toISOString().split('T')[0];
 
 const config: Config = {
   title: 'NDX Architecture',
@@ -92,7 +98,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Cabinet Office Digital & Data Office (CDDO). Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Government Digital Service (GDS), DSIT. Built ${buildDate} from <a href="https://github.com/co-cddo/ndx-try-arch/tree/${gitSha}">${gitShaShort}</a>.`,
     },
     prism: {
       theme: prismThemes.github,
