@@ -1,0 +1,45 @@
+# NDX Architecture Update System
+# ================================
+
+# Ephemeral cloned repositories (regenerated on demand)
+repos/
+
+# Runtime state (ephemeral, not committed)
+.state/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Node.js (if any tooling added)
+node_modules/
+npm-debug.log*
+
+# Python (if any tooling added)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Previous chat artifacts (not needed in repo)
+chat.txt
+
+# NOTE: docs/.meta/*.json is COMMITTED (not ignored)
+# These files track what was documented and are essential for change detection

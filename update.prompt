@@ -1,0 +1,879 @@
+---
+prompt_id: ndx-architecture-update
+version: "2.0"
+compatible_with: ["ralph-loop", "claude-code", "aider"]
+state_schema: "docs/.meta/*.json"
+ephemeral_state: ".state/"
+completion_signal: "<promise>COMPLETE</promise>"
+---
+
+# NDX Architecture Update System v2.0
+
+> **Purpose**: Automated discovery and documentation of the NDX/Innovation Sandbox ecosystem
+> **Mode**: Ralph Loop compatible with machine-optimized state management
+> **Execution**: State machine driven until completion criteria met
+
+---
+
+## CRITICAL INSTRUCTIONS FOR AI EXECUTOR
+
+1. **READ-ONLY for AWS** - All AWS operations are READ-ONLY. Document issues, do NOT fix them.
+2. **State-Driven** - Check `.state/prd.json` before each action. Update after each completion.
+3. **Idempotent** - Each task can be re-run safely. Use checksums/SHAs to detect changes.
+4. **Atomic Commits** - Commit after each completed phase with semantic message.
+5. **Change Detection** - Only regenerate docs whose sources have changed.
+6. **Completion Promise** - Only output `<promise>COMPLETE</promise>` when ALL criteria met.
+
+---
+
+## STATE MACHINE DEFINITION
+
+```yaml
+states:
+  INIT:
+    description: "Initialize environment and verify prerequisites"
+    transitions:
+      - on: "prerequisites_verified"
+        to: DISCOVER
+      - on: "error"
+        to: FAILED
+
+  DISCOVER:
+    description: "Discover sources (repos, AWS accounts, SCPs)"
+    transitions:
+      - on: "discovery_complete"
+        to: ANALYZE
+      - on: "error"
+        to: FAILED
+
+  ANALYZE:
+    description: "Compare discovered vs captured state"
+    transitions:
+      - on: "no_changes"
+        to: VALIDATE
+      - on: "changes_detected"
+        to: SYNC
+
+  SYNC:
+    description: "Synchronize sources (clone/update repos)"
+    transitions:
+      - on: "sync_complete"
+        to: GENERATE
+
+  GENERATE:
+    description: "Generate/update documentation"
+    parallel: true
+    transitions:
+      - on: "generation_complete"
+        to: VALIDATE
+      - on: "error"
+        to: ROLLBACK
+
+  VALIDATE:
+    description: "Quality gates and coverage checks"
+    transitions:
+      - on: "validation_passed"
+        to: COMMIT
+      - on: "validation_failed"
+        to: GENERATE
+
+  COMMIT:
+    description: "Update captured state and commit changes"
+    transitions:
+      - on: "commit_complete"
+        to: COMPLETE
+      - on: "error"
+        to: ROLLBACK
+
+  COMPLETE:
+    terminal: true
+    output: "<promise>COMPLETE</promise>"
+
+  FAILED:
+    terminal: true
+    output: "<error>FAILED: {reason}</error>"
+
+  ROLLBACK:
+    description: "Revert to last known good state"
+    transitions:
+      - on: "rollback_complete"
+        to: ANALYZE
+```
+
+---
+
+## FILE ARCHITECTURE
+
+### Committed State (docs/.meta/)
+
+These files are committed and track what was documented:
+
+| File | Purpose |
+|------|---------|
+| `manifest.json` | Document inventory, categories, sources |
+| `captured-state.json` | Source SHAs, timestamps - what was documented |
+| `dependency-graph.json` | Doc → Source relationships |
+| `quality-report.json` | Last validation results |
+
+### Ephemeral State (.state/)
+
+These files are gitignored and track runtime state:
+
+| File | Purpose |
+|------|---------|
+| `prd.json` | Task tracking (Ralph Loop format) |
+| `progress.log` | Session log |
+| `errors.log` | Error tracking |
+| `cache/*.json` | Per-repo analysis cache |
+
+---
+
+## TASK DEFINITION FORMAT
+
+Each task follows this schema:
+
+```json
+{
+  "id": "TASK-ID",
+  "state": "DISCOVER",
+  "title": "Human-readable title",
+  "priority": 1,
+  "status": "pending|in_progress|passed|failed|skipped",
+
+  "preconditions": [
+    { "type": "task_complete", "taskId": "PREVIOUS-TASK" },
+    { "type": "file_exists", "path": ".state/inventory.json" },
+    { "type": "command_succeeds", "command": "gh auth status" }
+  ],
+
+  "actions": [
+    { "type": "bash", "command": "...", "timeout": 60 },
+    { "type": "write_json", "path": "...", "schema": "..." },
+    { "type": "generate_doc", "template": "...", "output": "..." }
+  ],
+
+  "postconditions": [
+    { "type": "file_exists", "path": "output.json" },
+    { "type": "json_valid", "path": "output.json" },
+    { "type": "coverage", "minimum": 0.95 }
+  ],
+
+  "on_failure": {
+    "retry": 2,
+    "fallback": "TASK-FALLBACK",
+    "log_to": ".state/errors.log"
+  }
+}
+```
+
+---
+
+## PHASE 0: INITIALIZATION
+
+### Task: INIT-001 - Initialize Environment
+
+**Actions**:
+```bash
+# Create ephemeral state directories
+mkdir -p .state/cache
+
+# Create docs/.meta if not exists
+mkdir -p docs/.meta
+
+# Initialize state files if missing
+if [ ! -f ".state/prd.json" ]; then
+  # Create from template (see Appendix C)
+fi
+```
+
+**Postconditions**:
+- `.state/` directory exists
+- `docs/.meta/` directory exists
+- `.state/prd.json` initialized
+
+---
+
+### Task: INIT-002 - Verify Prerequisites
+
+**Actions**:
+```bash
+# GitHub CLI
+gh auth status || { echo "GitHub CLI not authenticated"; exit 1; }
+
+# AWS profiles (check both)
+aws sts get-caller-identity --profile NDX/orgManagement || echo "WARN: Org profile unavailable"
+aws sts get-caller-identity --profile NDX/InnovationSandboxHub || echo "WARN: Hub profile unavailable"
+
+# Required tools
+command -v jq || { echo "jq required"; exit 1; }
+command -v git || { echo "git required"; exit 1; }
+```
+
+**Postconditions**:
+- GitHub CLI authenticated
+- At least one AWS profile works (or warn)
+- Required tools available
+
+---
+
+## PHASE 1: DISCOVERY
+
+### Task: DISCOVERY-001 - Enumerate GitHub Repositories
+
+**Action**: Query GitHub for ALL repositories matching NDX/ISB patterns.
+
+```bash
+# Discover repos matching NDX/ISB patterns
+gh repo list co-cddo --limit 500 --json name,description,updatedAt,pushedAt,isArchived \
+  | jq '[.[] | select(
+      ((.name | test("ndx|sandbox|isb"; "i")) or
+       (.description // "" | test("ndx|sandbox|innovation"; "i"))) and
+      (.name != "ndx-try-arch")
+    )]' > .state/discovered-repos.json
+
+# Also check for related repos
+gh repo list co-cddo --limit 500 --json name,description \
+  | jq '[.[] | select(
+      (.name | test("try.*aws|aws.*try"; "i")) and
+      (.name != "ndx-try-arch")
+    )]' >> .state/discovered-repos.json
+```
+
+**Postconditions**:
+- `.state/discovered-repos.json` exists and valid
+- Contains array of repository objects
+
+---
+
+### Task: DISCOVERY-002 - Enumerate AWS Organization
+
+**Action**: Query AWS for accounts and OUs.
+
+```bash
+PROFILE="NDX/orgManagement"
+
+# List accounts
+aws organizations list-accounts --profile $PROFILE \
+  --query 'Accounts[*].{Id:Id,Name:Name,Email:Email,Status:Status}' \
+  > .state/discovered-accounts.json
+
+# List roots
+aws organizations list-roots --profile $PROFILE > .state/org-roots.json
+
+# List OUs (recursive)
+ROOT_ID=$(jq -r '.Roots[0].Id' .state/org-roots.json)
+aws organizations list-organizational-units-for-parent \
+  --parent-id "$ROOT_ID" --profile $PROFILE > .state/org-ous.json
+```
+
+**Postconditions**:
+- `.state/discovered-accounts.json` exists
+- `.state/org-roots.json` exists
+- `.state/org-ous.json` exists
+
+---
+
+### Task: DISCOVERY-003 - Enumerate SCPs
+
+**Action**: Query AWS for Service Control Policies.
+
+```bash
+PROFILE="NDX/orgManagement"
+
+# List all SCPs
+aws organizations list-policies --filter SERVICE_CONTROL_POLICY --profile $PROFILE \
+  > .state/discovered-scps.json
+
+# Get content of each SCP
+mkdir -p .state/scps
+for policy_id in $(jq -r '.Policies[].Id' .state/discovered-scps.json); do
+  aws organizations describe-policy --policy-id "$policy_id" --profile $PROFILE \
+    > ".state/scps/$policy_id.json"
+done
+```
+
+**Postconditions**:
+- `.state/discovered-scps.json` exists
+- `.state/scps/*.json` files for each SCP
+
+---
+
+### Task: DISCOVERY-004 - Check Upstream Fork Status
+
+**Action**: Compare ISB fork with upstream.
+
+```bash
+cd repos/innovation-sandbox-on-aws 2>/dev/null || exit 0
+
+# Add/update upstream remote
+git remote add upstream https://github.com/aws-solutions/innovation-sandbox-on-aws.git 2>/dev/null || true
+git fetch upstream
+
+# Get version info
+UPSTREAM_SHA=$(git rev-parse upstream/main 2>/dev/null || echo "unknown")
+LOCAL_SHA=$(git rev-parse HEAD)
+
+# Calculate divergence
+AHEAD=$(git rev-list --count upstream/main..HEAD 2>/dev/null || echo "0")
+BEHIND=$(git rev-list --count HEAD..upstream/main 2>/dev/null || echo "0")
+
+# Save to state
+cat > ../.state/upstream-status.json << EOF
+{
+  "upstreamUrl": "https://github.com/aws-solutions/innovation-sandbox-on-aws",
+  "upstreamSha": "$UPSTREAM_SHA",
+  "localSha": "$LOCAL_SHA",
+  "divergence": {
+    "ahead": $AHEAD,
+    "behind": $BEHIND
+  },
+  "checkedAt": "$(date -Iseconds)"
+}
+EOF
+```
+
+**Postconditions**:
+- `.state/upstream-status.json` exists with current fork status
+
+---
+
+## PHASE 2: CHANGE ANALYSIS
+
+### Task: ANALYZE-001 - Compare Discovered vs Captured State
+
+**Action**: Generate drift report by comparing current state to captured state.
+
+```bash
+#!/bin/bash
+# Change detection algorithm (pseudocode implementation)
+
+CAPTURED="docs/.meta/captured-state.json"
+DISCOVERED_REPOS=".state/discovered-repos.json"
+DRIFT_REPORT=".state/drift-report.json"
+
+if [ ! -f "$CAPTURED" ]; then
+  echo '{"capturedAt": null}' > "$CAPTURED"
+fi
+
+# Generate drift report
+cat > "$DRIFT_REPORT" << 'PYTHON'
+import json
+import sys
+
+# Load files
+with open('docs/.meta/captured-state.json') as f:
+    captured = json.load(f)
+with open('.state/discovered-repos.json') as f:
+    discovered_repos = json.load(f)
+
+# Initialize drift report
+drift = {
+    "generatedAt": None,  # Set by script
+    "repositories": {
+        "added": [],
+        "removed": [],
+        "updated": [],
+        "unchanged": []
+    },
+    "docsToRegenerate": [],
+    "docsToRemove": []
+}
+
+# Compare repositories
+captured_repos = captured.get('sources', {}).get('repositories', {})
+discovered_names = {r['name'] for r in discovered_repos}
+captured_names = set(captured_repos.keys())
+
+drift['repositories']['added'] = list(discovered_names - captured_names)
+drift['repositories']['removed'] = list(captured_names - discovered_names)
+
+# For repos in both, check SHA changes
+for repo in discovered_names & captured_names:
+    # Would need to check actual SHAs from cloned repos
+    pass
+
+print(json.dumps(drift, indent=2))
+PYTHON
+```
+
+**Output Schema** (`.state/drift-report.json`):
+```json
+{
+  "generatedAt": "ISO8601",
+  "repositories": {
+    "added": ["repo-names"],
+    "removed": ["repo-names"],
+    "updated": ["repo-names"],
+    "unchanged": ["repo-names"]
+  },
+  "aws": {
+    "accountsChanged": [],
+    "scpsChanged": false
+  },
+  "impact": {
+    "docsToRegenerate": ["10-isb-core-architecture.md"],
+    "docsToRemove": [],
+    "docsNewNeeded": []
+  }
+}
+```
+
+---
+
+### Task: ANALYZE-002 - Prioritize Documentation Updates
+
+**Action**: Based on drift report, generate prioritized task list.
+
+**Priority Rules**:
+1. **P0 - Critical**: Security policy changes, major upstream changes
+2. **P1 - High**: New repositories, removed components, new AWS accounts
+3. **P2 - Medium**: Repository content changes, workflow updates
+4. **P3 - Low**: Minor drift, formatting updates
+
+**Output**: Append new tasks to `.state/prd.json` based on detected changes.
+
+---
+
+## PHASE 3: SYNCHRONIZATION
+
+### Task: SYNC-001 - Clone/Update All Repositories
+
+**Action**: Synchronize all discovered repositories.
+
+```bash
+mkdir -p repos
+
+for repo in $(jq -r '.[].name' .state/discovered-repos.json); do
+  if [ -d "repos/$repo" ]; then
+    echo "Updating: $repo"
+    git -C "repos/$repo" fetch --all
+    git -C "repos/$repo" pull origin main 2>/dev/null || \
+    git -C "repos/$repo" pull origin master 2>/dev/null || true
+  else
+    echo "Cloning: $repo"
+    gh repo clone "co-cddo/$repo" "repos/$repo" -- --depth=1
+  fi
+
+  # Record current SHA
+  SHA=$(git -C "repos/$repo" rev-parse HEAD 2>/dev/null || echo "unknown")
+  echo "{\"$repo\": \"$SHA\"}" >> .state/repo-shas.jsonl
+done
+```
+
+**Postconditions**:
+- All discovered repos exist in `repos/`
+- `.state/repo-shas.jsonl` contains current SHAs
+
+---
+
+## PHASE 4: DOCUMENTATION GENERATION
+
+### Generation Rules
+
+For each document that needs regeneration:
+
+1. **Read the dependency graph** to understand what sources affect this document
+2. **Analyze the source repositories/resources**
+3. **Generate the document** following quality standards
+4. **Update the manifest** with new metadata
+
+### Quality Standards
+
+Each generated document MUST have:
+
+- **H1 Title** - Clear, descriptive title
+- **Executive Summary** - 2-3 sentence overview
+- **Mermaid Diagram** - At least one architecture/flow diagram
+- **Source Citations** - References to source files/repos
+- **Cross-references** - Links to related docs
+- **No TODOs** - No placeholder content
+
+### Document Templates
+
+#### Repository Documentation Template
+```markdown
+# {Repository Name}
+
+> **Last Updated**: {date}
+> **Source**: [{repo-url}]({repo-url})
+> **Captured SHA**: `{sha:7}`
+
+## Executive Summary
+
+{2-3 sentences describing the repository's purpose and role in NDX}
+
+## Architecture
+
+```mermaid
+{architecture diagram}
+```
+
+## Key Components
+
+{analysis of main components}
+
+## Dependencies
+
+{runtime and dev dependencies}
+
+## Integration Points
+
+{how this repo connects to others}
+
+## Issues Discovered
+
+{any problems or concerns found}
+
+---
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*
+```
+
+---
+
+## PHASE 5: VALIDATION
+
+### Task: VALIDATE-001 - Structure Validation
+
+```bash
+./scripts/validate.sh --structure
+```
+
+**Checks**:
+- [ ] Has H1 title
+- [ ] Has Executive Summary section
+- [ ] Has version/date metadata
+- [ ] Max heading depth = 4
+
+---
+
+### Task: VALIDATE-002 - Content Validation
+
+```bash
+./scripts/validate.sh --content
+```
+
+**Checks**:
+- [ ] Minimum 300 words (for component docs)
+- [ ] Has at least one Mermaid diagram
+- [ ] No TODO/FIXME placeholders
+- [ ] Cites sources
+
+---
+
+### Task: VALIDATE-003 - Link Validation
+
+```bash
+./scripts/validate.sh --links
+```
+
+**Checks**:
+- [ ] All internal links resolve
+- [ ] No broken relative paths
+
+---
+
+### Task: VALIDATE-004 - Mermaid Validation
+
+```bash
+./scripts/validate.sh --mermaid
+```
+
+**Checks**:
+- [ ] Valid Mermaid syntax
+- [ ] No undefined node references
+- [ ] Renders without errors
+
+---
+
+### Task: VALIDATE-005 - Coverage Validation
+
+```bash
+./scripts/validate.sh --coverage
+```
+
+**Checks**:
+- [ ] All discovered repos are documented
+- [ ] All AWS accounts are mentioned
+- [ ] All SCPs are catalogued
+- [ ] No orphan documents
+
+---
+
+## PHASE 6: COMMIT
+
+### Task: COMMIT-001 - Update Captured State
+
+**Action**: Update `docs/.meta/captured-state.json` with current source SHAs.
+
+```bash
+# Update captured state with all current SHAs
+jq -n \
+  --arg time "$(date -Iseconds)" \
+  --slurpfile repos .state/repo-shas.jsonl \
+  '{
+    capturedAt: $time,
+    promptVersion: "2.0",
+    sources: {
+      repositories: ($repos | add)
+    }
+  }' > docs/.meta/captured-state.json
+```
+
+---
+
+### Task: COMMIT-002 - Git Commit
+
+**Action**: Commit all changes with semantic message.
+
+```bash
+git add docs/
+git add docs/.meta/
+
+git commit -m "docs: update NDX architecture documentation
+
+- Captured state at $(date -Iseconds)
+- Repositories analyzed: $(jq 'length' .state/discovered-repos.json)
+- Documents generated/updated: $(git diff --cached --name-only | grep 'docs/' | wc -l)
+
+Generated by update.prompt v2.0"
+```
+
+---
+
+## COMPLETION CRITERIA
+
+Output `<promise>COMPLETE</promise>` only when ALL of these are true:
+
+1. **All tasks passed** - `.state/prd.json` has all tasks with `"status": "passed"`
+2. **No validation errors** - All quality gates pass
+3. **State captured** - `docs/.meta/captured-state.json` reflects current source state
+4. **Changes committed** - Git commit created with all updates
+
+---
+
+## RESET MECHANISMS
+
+### Quick Reference
+
+| Goal | Command |
+|------|---------|
+| View changes since last capture | `./scripts/diff-state.sh` |
+| Re-run all tasks | `rm -rf .state/` |
+| Force regenerate all docs | `rm docs/.meta/captured-state.json && rm -rf .state/` |
+| Regenerate single doc | `./scripts/regenerate.sh <doc-name.md>` |
+| Regenerate category | `./scripts/regenerate.sh --category isb-core` |
+| Full clean slate | `rm -rf repos/ .state/ && rm docs/.meta/*.json` |
+
+---
+
+## APPENDIX A: DOCUMENTATION FILE NUMBERING
+
+| Range | Category | Files |
+|-------|----------|-------|
+| 00-09 | Inventory & Overview | repo-inventory, upstream-analysis, aws-org |
+| 10-19 | ISB Core | core-architecture, lease-lifecycle, frontend, customizations |
+| 20-29 | ISB Satellites | approver, billing-separator, cost-tracking, deployer, utils |
+| 30-39 | NDX Websites | ndx-website, signup-flow, scenarios-microsite |
+| 40-49 | LZA & Terraform | lza-config, terraform-scp, terraform-resources |
+| 50-59 | CI/CD | github-actions, oidc-config, deployment-flows, manual-ops |
+| 60-69 | Security | auth-architecture, encryption, secrets, compliance |
+| 70-79 | Data Flows | data-flows, external-integrations, repo-dependencies |
+| 80-89 | Master Diagrams | c4-architecture, aws-architecture, process-flows |
+| 90-99 | Issues & Meta | issues-discovered, update-log |
+
+---
+
+## APPENDIX B: QUALITY GATES SCHEMA
+
+```json
+{
+  "gates": {
+    "structure": {
+      "checks": [
+        { "rule": "has_h1_title", "required": true },
+        { "rule": "has_executive_summary", "required": true },
+        { "rule": "has_version_metadata", "required": true },
+        { "rule": "max_heading_depth", "value": 4 }
+      ]
+    },
+    "content": {
+      "checks": [
+        { "rule": "min_word_count", "value": 300 },
+        { "rule": "has_mermaid_diagram", "required": true },
+        { "rule": "no_todo_placeholders", "required": true },
+        { "rule": "no_broken_links", "required": true },
+        { "rule": "cites_sources", "required": true }
+      ]
+    },
+    "coverage": {
+      "checks": [
+        { "rule": "all_repos_documented", "required": true },
+        { "rule": "all_accounts_documented", "required": true },
+        { "rule": "all_scps_documented", "required": true },
+        { "rule": "no_orphan_docs", "required": true }
+      ]
+    },
+    "mermaid": {
+      "checks": [
+        { "rule": "valid_syntax", "required": true },
+        { "rule": "renders_without_error", "required": true },
+        { "rule": "no_undefined_nodes", "required": true }
+      ]
+    }
+  }
+}
+```
+
+---
+
+## APPENDIX C: STATE FILE INITIALIZATION
+
+If starting fresh, initialize with:
+
+```bash
+#!/bin/bash
+# Initialize all state files
+
+mkdir -p .state/cache
+mkdir -p docs/.meta
+
+# Initialize prd.json (Ralph Loop format)
+cat > .state/prd.json << 'EOF'
+{
+  "version": "2.0",
+  "lastRun": null,
+  "currentState": "INIT",
+  "stories": [
+    {"id": "INIT-001", "state": "INIT", "title": "Initialize environment", "priority": 0, "status": "pending", "blockedBy": []},
+    {"id": "INIT-002", "state": "INIT", "title": "Verify prerequisites", "priority": 0, "status": "pending", "blockedBy": ["INIT-001"]},
+    {"id": "DISCOVERY-001", "state": "DISCOVER", "title": "Enumerate GitHub repositories", "priority": 1, "status": "pending", "blockedBy": ["INIT-002"]},
+    {"id": "DISCOVERY-002", "state": "DISCOVER", "title": "Enumerate AWS organization", "priority": 1, "status": "pending", "blockedBy": ["INIT-002"]},
+    {"id": "DISCOVERY-003", "state": "DISCOVER", "title": "Enumerate SCPs", "priority": 1, "status": "pending", "blockedBy": ["DISCOVERY-002"]},
+    {"id": "DISCOVERY-004", "state": "DISCOVER", "title": "Check upstream fork status", "priority": 1, "status": "pending", "blockedBy": ["DISCOVERY-001"]},
+    {"id": "ANALYZE-001", "state": "ANALYZE", "title": "Compare discovered vs captured", "priority": 2, "status": "pending", "blockedBy": ["DISCOVERY-001", "DISCOVERY-002", "DISCOVERY-003", "DISCOVERY-004"]},
+    {"id": "ANALYZE-002", "state": "ANALYZE", "title": "Prioritize documentation updates", "priority": 2, "status": "pending", "blockedBy": ["ANALYZE-001"]},
+    {"id": "SYNC-001", "state": "SYNC", "title": "Clone/update all repositories", "priority": 2, "status": "pending", "blockedBy": ["ANALYZE-002"]},
+    {"id": "VALIDATE-001", "state": "VALIDATE", "title": "Structure validation", "priority": 4, "status": "pending", "blockedBy": []},
+    {"id": "VALIDATE-002", "state": "VALIDATE", "title": "Content validation", "priority": 4, "status": "pending", "blockedBy": []},
+    {"id": "VALIDATE-003", "state": "VALIDATE", "title": "Link validation", "priority": 4, "status": "pending", "blockedBy": []},
+    {"id": "VALIDATE-004", "state": "VALIDATE", "title": "Mermaid validation", "priority": 4, "status": "pending", "blockedBy": []},
+    {"id": "VALIDATE-005", "state": "VALIDATE", "title": "Coverage validation", "priority": 4, "status": "pending", "blockedBy": []},
+    {"id": "COMMIT-001", "state": "COMMIT", "title": "Update captured state", "priority": 5, "status": "pending", "blockedBy": ["VALIDATE-001", "VALIDATE-002", "VALIDATE-003", "VALIDATE-004", "VALIDATE-005"]},
+    {"id": "COMMIT-002", "state": "COMMIT", "title": "Git commit", "priority": 5, "status": "pending", "blockedBy": ["COMMIT-001"]}
+  ]
+}
+EOF
+
+# Initialize captured-state.json if not exists
+if [ ! -f "docs/.meta/captured-state.json" ]; then
+  cat > docs/.meta/captured-state.json << 'EOF'
+{
+  "$schema": "captured-state.schema.json",
+  "capturedAt": null,
+  "promptVersion": "2.0",
+  "sources": {
+    "repositories": {},
+    "aws": {
+      "organization": { "id": null, "capturedAt": null },
+      "accounts": {},
+      "scps": { "capturedAt": null, "count": null }
+    }
+  }
+}
+EOF
+fi
+
+echo "State initialized. Run update prompt to begin."
+```
+
+---
+
+## APPENDIX D: DEPENDENCY IMPACT ANALYSIS
+
+When a source changes, use the dependency graph to find affected documents:
+
+```bash
+# Find all docs affected by a repository change
+jq -r --arg repo "repo:innovation-sandbox-on-aws" '
+  .edges[]
+  | select(.from == $repo)
+  | .to
+' docs/.meta/dependency-graph.json
+
+# Find transitive dependencies
+jq -r --arg repo "repo:innovation-sandbox-on-aws" '
+  .impactAnalysis[$repo] | .directDocs + .transitiveDocs | .[]
+' docs/.meta/dependency-graph.json
+```
+
+---
+
+## APPENDIX E: AWS PROFILE CONFIGURATION
+
+Expected AWS SSO profiles in `~/.aws/config`:
+
+```ini
+[profile NDX/orgManagement]
+sso_start_url = https://cddo.awsapps.com/start
+sso_region = eu-west-2
+sso_account_id = XXXXXXXXXXXXX
+sso_role_name = AdministratorAccess
+region = eu-west-2
+
+[profile NDX/InnovationSandboxHub]
+sso_start_url = https://cddo.awsapps.com/start
+sso_region = eu-west-2
+sso_account_id = 568672915267
+sso_role_name = AdministratorAccess
+region = eu-west-2
+```
+
+---
+
+## EXECUTION
+
+### With Ralph Loop
+```bash
+# Initialize
+./scripts/init-state.sh
+
+# Run with ralph
+ralph --prompt update.prompt --max-turns 20
+```
+
+### Standalone with Claude Code
+```bash
+# Single pass
+claude --prompt update.prompt
+
+# Check if complete
+jq '.stories | map(select(.status != "passed")) | length' .state/prd.json
+```
+
+### Scheduled (Cron)
+```bash
+# Weekly refresh
+0 2 * * 0 cd /path/to/ndx-try-arch && claude --prompt update.prompt >> .state/progress.log 2>&1
+```
+
+---
+
+## COMPLETION PROMISE
+
+When ALL of the following are true:
+- `.state/prd.json` has no stories with `"status": "failed"` or `"status": "pending"`
+- `./scripts/validate.sh --all` exits with code 0
+- `docs/.meta/captured-state.json` has current timestamps
+- All changes are committed
+
+Output this exact string to signal completion:
+
+```xml
+<promise>COMPLETE</promise>
+```
+
+Do NOT output this string until ALL criteria are met.
+
+---
+
+**END OF PROMPT**

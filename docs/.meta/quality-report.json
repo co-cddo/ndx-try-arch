@@ -1,0 +1,91 @@
+{
+  "$schema": "quality-report.schema.json",
+  "generatedAt": null,
+  "promptVersion": "2.0",
+
+  "summary": {
+    "totalDocuments": 0,
+    "passedDocuments": 0,
+    "failedDocuments": 0,
+    "totalIssues": 0,
+    "criticalIssues": 0,
+    "overallScore": null
+  },
+
+  "gates": {
+    "structure": {
+      "description": "Document structure validation",
+      "passed": null,
+      "checks": [
+        { "rule": "has_h1_title", "required": true, "passed": null },
+        { "rule": "has_executive_summary", "required": true, "passed": null },
+        { "rule": "has_version_metadata", "required": true, "passed": null },
+        { "rule": "max_heading_depth", "value": 4, "passed": null }
+      ]
+    },
+    "content": {
+      "description": "Content quality validation",
+      "passed": null,
+      "checks": [
+        { "rule": "min_word_count", "value": 300, "passed": null },
+        { "rule": "has_mermaid_diagram", "required": true, "passed": null },
+        { "rule": "no_todo_placeholders", "required": true, "passed": null },
+        { "rule": "no_broken_links", "required": true, "passed": null },
+        { "rule": "cites_sources", "required": true, "passed": null }
+      ]
+    },
+    "coverage": {
+      "description": "Documentation coverage validation",
+      "passed": null,
+      "checks": [
+        { "rule": "all_repos_documented", "required": true, "passed": null },
+        { "rule": "all_accounts_documented", "required": true, "passed": null },
+        { "rule": "all_scps_documented", "required": true, "passed": null },
+        { "rule": "no_orphan_docs", "required": true, "passed": null }
+      ]
+    },
+    "mermaid": {
+      "description": "Mermaid diagram validation",
+      "passed": null,
+      "checks": [
+        { "rule": "valid_syntax", "required": true, "passed": null },
+        { "rule": "renders_without_error", "required": true, "passed": null },
+        { "rule": "no_undefined_nodes", "required": true, "passed": null }
+      ]
+    }
+  },
+
+  "documentResults": {
+    "_comment": "Populated during validation phase. Maps document filename to validation results.",
+    "_example": {
+      "passed": null,
+      "score": null,
+      "wordCount": null,
+      "diagramCount": null,
+      "issues": [],
+      "gates": {
+        "structure": { "passed": null, "failures": [] },
+        "content": { "passed": null, "failures": [] },
+        "mermaid": { "passed": null, "failures": [] }
+      }
+    }
+  },
+
+  "coverageResults": {
+    "repositories": {
+      "documented": [],
+      "missing": [],
+      "coverage": null
+    },
+    "awsAccounts": {
+      "documented": [],
+      "missing": [],
+      "coverage": null
+    },
+    "scps": {
+      "documented": [],
+      "missing": [],
+      "coverage": null
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "captured-state.schema.json",
+  "capturedAt": null,
+  "promptVersion": "2.0",
+
+  "sources": {
+    "repositories": {
+      "_comment": "Populated by discovery phase. Each entry tracks what was documented.",
+      "_example": {
+        "url": "https://github.com/co-cddo/innovation-sandbox-on-aws",
+        "capturedSha": null,
+        "capturedBranch": "main",
+        "capturedAt": null,
+        "upstream": {
+          "url": "https://github.com/aws-solutions/innovation-sandbox-on-aws",
+          "capturedSha": null,
+          "divergence": { "ahead": 0, "behind": 0 }
+        },
+        "documentsAffected": [],
+        "keyFiles": {}
+      }
+    },
+
+    "aws": {
+      "organization": {
+        "id": null,
+        "capturedAt": null,
+        "accountCount": null,
+        "ouCount": null
+      },
+      "accounts": {
+        "_comment": "Populated by AWS discovery. Maps account ID to captured state.",
+        "_example": {
+          "name": null,
+          "capturedAt": null,
+          "profile": null,
+          "resources": {
+            "lambdas": null,
+            "dynamodbTables": null,
+            "eventbridgeRules": null,
+            "s3Buckets": null
+          },
+          "documentsAffected": []
+        }
+      },
+      "scps": {
+        "capturedAt": null,
+        "count": null,
+        "checksumAll": null
+      }
+    }
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "$schema": "dependency-graph.schema.json",
+  "generatedAt": null,
+
+  "nodes": {
+    "_comment": "Nodes represent sources and documents. Populated during analysis phase.",
+
+    "repo:innovation-sandbox-on-aws": { "type": "source", "category": "repository" },
+    "repo:ndx": { "type": "source", "category": "repository" },
+    "repo:ndx-scenarios": { "type": "source", "category": "repository" },
+    "repo:isb-approver": { "type": "source", "category": "repository" },
+    "repo:isb-billing-separator": { "type": "source", "category": "repository" },
+    "repo:isb-cost-tracking": { "type": "source", "category": "repository" },
+    "repo:isb-deployer": { "type": "source", "category": "repository" },
+    "repo:isb-utils": { "type": "source", "category": "repository" },
+    "repo:ndx-lza-config": { "type": "source", "category": "repository" },
+    "repo:ndx-terraform-scp": { "type": "source", "category": "repository" },
+    "repo:ndx-terraform": { "type": "source", "category": "repository" },
+    "repo:ndx-try-aws-isb": { "type": "source", "category": "repository" },
+
+    "aws:organization": { "type": "source", "category": "aws-org" },
+    "aws:scps": { "type": "source", "category": "aws-policy" },
+
+    "doc:00-index.md": { "type": "document", "category": "inventory" },
+    "doc:00-repo-inventory.md": { "type": "document", "category": "inventory" },
+    "doc:01-upstream-analysis.md": { "type": "document", "category": "inventory" },
+    "doc:02-aws-organization.md": { "type": "document", "category": "inventory" },
+    "doc:03-hub-account-resources.md": { "type": "document", "category": "inventory" },
+    "doc:04-cross-account-trust.md": { "type": "document", "category": "inventory" },
+    "doc:05-service-control-policies.md": { "type": "document", "category": "inventory" },
+    "doc:10-isb-core-architecture.md": { "type": "document", "category": "isb-core" },
+    "doc:11-lease-lifecycle.md": { "type": "document", "category": "isb-core" },
+    "doc:12-isb-frontend.md": { "type": "document", "category": "isb-core" },
+    "doc:13-isb-customizations.md": { "type": "document", "category": "isb-core" },
+    "doc:20-approver-system.md": { "type": "document", "category": "isb-satellites" },
+    "doc:21-billing-separator.md": { "type": "document", "category": "isb-satellites" },
+    "doc:22-cost-tracking.md": { "type": "document", "category": "isb-satellites" },
+    "doc:23-deployer.md": { "type": "document", "category": "isb-satellites" },
+    "doc:24-utils.md": { "type": "document", "category": "isb-satellites" },
+    "doc:30-ndx-website.md": { "type": "document", "category": "websites" },
+    "doc:31-signup-flow.md": { "type": "document", "category": "websites" },
+    "doc:32-scenarios-microsite.md": { "type": "document", "category": "websites" },
+    "doc:40-lza-configuration.md": { "type": "document", "category": "infrastructure" },
+    "doc:41-terraform-scp.md": { "type": "document", "category": "infrastructure" },
+    "doc:42-terraform-resources.md": { "type": "document", "category": "infrastructure" },
+    "doc:43-ndx-try-aws-isb.md": { "type": "document", "category": "infrastructure" },
+    "doc:50-github-actions-inventory.md": { "type": "document", "category": "cicd" },
+    "doc:51-oidc-configuration.md": { "type": "document", "category": "cicd" },
+    "doc:52-deployment-flows.md": { "type": "document", "category": "cicd" },
+    "doc:53-manual-operations.md": { "type": "document", "category": "cicd" },
+    "doc:60-auth-architecture.md": { "type": "document", "category": "security" },
+    "doc:61-encryption.md": { "type": "document", "category": "security" },
+    "doc:62-secrets-management.md": { "type": "document", "category": "security" },
+    "doc:63-compliance.md": { "type": "document", "category": "security" },
+    "doc:70-data-flows.md": { "type": "document", "category": "data" },
+    "doc:71-external-integrations.md": { "type": "document", "category": "data" },
+    "doc:72-repo-dependencies.md": { "type": "document", "category": "data" },
+    "doc:80-c4-architecture.md": { "type": "document", "category": "architecture" },
+    "doc:81-aws-architecture.md": { "type": "document", "category": "architecture" },
+    "doc:82-process-flows.md": { "type": "document", "category": "architecture" },
+    "doc:90-issues-discovered.md": { "type": "document", "category": "meta" }
+  },
+
+  "edges": [
+    { "from": "repo:innovation-sandbox-on-aws", "to": "doc:10-isb-core-architecture.md", "relation": "documents" },
+    { "from": "repo:innovation-sandbox-on-aws", "to": "doc:11-lease-lifecycle.md", "relation": "documents" },
+    { "from": "repo:innovation-sandbox-on-aws", "to": "doc:12-isb-frontend.md", "relation": "documents" },
+    { "from": "repo:innovation-sandbox-on-aws", "to": "doc:13-isb-customizations.md", "relation": "documents" },
+    { "from": "repo:innovation-sandbox-on-aws", "to": "doc:01-upstream-analysis.md", "relation": "documents" },
+
+    { "from": "repo:isb-approver", "to": "doc:20-approver-system.md", "relation": "documents" },
+    { "from": "repo:isb-billing-separator", "to": "doc:21-billing-separator.md", "relation": "documents" },
+    { "from": "repo:isb-cost-tracking", "to": "doc:22-cost-tracking.md", "relation": "documents" },
+    { "from": "repo:isb-deployer", "to": "doc:23-deployer.md", "relation": "documents" },
+    { "from": "repo:isb-utils", "to": "doc:24-utils.md", "relation": "documents" },
+
+    { "from": "repo:ndx", "to": "doc:30-ndx-website.md", "relation": "documents" },
+    { "from": "repo:ndx", "to": "doc:31-signup-flow.md", "relation": "documents" },
+    { "from": "repo:ndx-scenarios", "to": "doc:32-scenarios-microsite.md", "relation": "documents" },
+
+    { "from": "repo:ndx-lza-config", "to": "doc:40-lza-configuration.md", "relation": "documents" },
+    { "from": "repo:ndx-terraform-scp", "to": "doc:41-terraform-scp.md", "relation": "documents" },
+    { "from": "repo:ndx-terraform", "to": "doc:42-terraform-resources.md", "relation": "documents" },
+    { "from": "repo:ndx-try-aws-isb", "to": "doc:43-ndx-try-aws-isb.md", "relation": "documents" },
+
+    { "from": "aws:organization", "to": "doc:02-aws-organization.md", "relation": "documents" },
+    { "from": "aws:organization", "to": "doc:03-hub-account-resources.md", "relation": "documents" },
+    { "from": "aws:organization", "to": "doc:04-cross-account-trust.md", "relation": "documents" },
+    { "from": "aws:scps", "to": "doc:05-service-control-policies.md", "relation": "documents" },
+
+    { "from": "doc:10-isb-core-architecture.md", "to": "doc:11-lease-lifecycle.md", "relation": "references" },
+    { "from": "doc:10-isb-core-architecture.md", "to": "doc:12-isb-frontend.md", "relation": "references" },
+    { "from": "doc:10-isb-core-architecture.md", "to": "doc:80-c4-architecture.md", "relation": "references" },
+    { "from": "doc:02-aws-organization.md", "to": "doc:81-aws-architecture.md", "relation": "references" },
+    { "from": "doc:11-lease-lifecycle.md", "to": "doc:82-process-flows.md", "relation": "references" },
+    { "from": "doc:52-deployment-flows.md", "to": "doc:82-process-flows.md", "relation": "references" }
+  ],
+
+  "impactAnalysis": {
+    "repo:innovation-sandbox-on-aws": {
+      "directDocs": ["10-isb-core-architecture.md", "11-lease-lifecycle.md", "12-isb-frontend.md", "13-isb-customizations.md", "01-upstream-analysis.md"],
+      "transitiveDocs": ["80-c4-architecture.md", "82-process-flows.md"]
+    },
+    "repo:isb-approver": {
+      "directDocs": ["20-approver-system.md"],
+      "transitiveDocs": []
+    },
+    "aws:organization": {
+      "directDocs": ["02-aws-organization.md", "03-hub-account-resources.md", "04-cross-account-trust.md"],
+      "transitiveDocs": ["81-aws-architecture.md"]
+    },
+    "aws:scps": {
+      "directDocs": ["05-service-control-policies.md"],
+      "transitiveDocs": ["63-compliance.md"]
+    }
+  }
+}
