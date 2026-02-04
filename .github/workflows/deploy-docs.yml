@@ -2,8 +2,7 @@ name: Deploy Documentation
 
 on:
   push:
-    # TODO: Change back to [main] before merging PR
-    branches: [feat/docusaurus-docs-site]
+    branches: [main]
     paths:
       - 'docs/**'
       - 'website/**'
