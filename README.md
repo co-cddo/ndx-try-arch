@@ -2,6 +2,8 @@
 
 Automated architecture documentation for the NDX (National Digital Exchange) Innovation Sandbox ecosystem.
 
+📖 **[Browse the documentation](https://co-cddo.github.io/ndx-try-arch/)**
+
 ## What This System Does
 
 This repository maintains living documentation of the NDX/ISB infrastructure by:
