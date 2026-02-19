@@ -1,0 +1,9 @@
+{
+  "enabledPlugins": {
+    "documentation-generation@claude-code-workflows": true,
+    "mermaid-tools@daymade-skills": true,
+    "mermaid-diagrams@agent-toolkit": true,
+    "c4-architecture@claude-code-workflows": true,
+    "agent-mermaid-diagram-specialist@agent-toolkit": true
+  }
+}
