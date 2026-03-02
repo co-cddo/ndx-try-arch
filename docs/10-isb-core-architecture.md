@@ -1,22 +1,12 @@
 # ISB Core Architecture
 
+> **Last Updated**: 2026-03-02
+> **Source**: [co-cddo/innovation-sandbox-on-aws](https://github.com/co-cddo/innovation-sandbox-on-aws)
+> **Captured SHA**: `cf75b87`
+
 ## Executive Summary
 
-The Innovation Sandbox (ISB) Core is the central orchestration platform for the National Digital Experience (NDX) program's AWS account leasing system. Built on AWS CDK with TypeScript, it manages a pool of AWS accounts that can be leased to teams for experimentation and innovation within controlled guardrails.
-
-**Key Capabilities:**
-- Account pool management with automated lifecycle operations
-- Lease management with templates and quotas
-- Multi-account orchestration via AWS Organizations
-- Identity and access management through AWS Identity Center
-- Real-time monitoring and cleanup automation
-- React-based administrative frontend
-
-**Scale:** 19 Lambda functions, 3 DynamoDB tables, 4 CDK stacks, EventBridge-driven architecture
-
-**Status:** Production system (Phase 3) with active dependencies from Phase 4 satellites
-
----
+The Innovation Sandbox on AWS (ISB) is a multi-account orchestration platform built with AWS CDK and TypeScript that manages temporary AWS sandbox accounts for experimentation and learning. It is deployed across five CloudFormation stacks (AccountPool, IDC, Data, Compute, and SandboxAccount via StackSet), uses DynamoDB for state persistence, API Gateway with CloudFront for its REST API and React frontend, EventBridge for event-driven coordination, and Step Functions with CodeBuild for automated account cleanup using AWS Nuke. The CDDO fork at version 1.1.4 (solution ID SO0284) extends the upstream AWS Solutions implementation with satellite services for cost tracking, scenario deployment, and enhanced approvals.
 
 ## Architecture Overview
 
@@ -24,871 +14,666 @@ The Innovation Sandbox (ISB) Core is the central orchestration platform for the 
 
 ```mermaid
 graph TB
-    subgraph "External Systems"
-        IDC[AWS Identity Center]
-        ORGS[AWS Organizations]
-        CT[AWS Control Tower]
-        USERS[End Users]
+    subgraph "User Layer"
+        USERS[End Users / Civil Servants]
+        ADMINS[ISB Admins / Managers]
     end
 
-    subgraph "ISB Core"
-        API[API Gateway]
-        FRONTEND[React Frontend]
-        LAMBDA[Lambda Functions]
-        DDB[DynamoDB Tables]
-        EB[EventBridge Bus]
-        SFN[Step Functions]
+    subgraph "Frontend Layer"
+        CF[CloudFront Distribution]
+        S3FE[S3 - Frontend Assets]
+    end
+
+    subgraph "API Layer"
+        APIGW[API Gateway REST API]
+        WAF[AWS WAF v2]
+        AUTH[Authorizer Lambda<br/>JWT + SAML]
+    end
+
+    subgraph "Core Lambdas"
+        LEASES[Leases Lambda]
+        TEMPLATES[Lease Templates Lambda]
+        ACCOUNTS[Accounts Lambda]
+        CONFIG[Configurations Lambda]
+        SSO[SSO Handler Lambda]
+    end
+
+    subgraph "Event-Driven Layer"
+        EB[ISBEventBus<br/>EventBridge]
+        ALM[Account Lifecycle<br/>Manager Lambda]
+        LM[Lease Monitoring<br/>Lambda]
+        ADM[Account Drift<br/>Monitoring Lambda]
+        EMAIL[Email Notification<br/>Lambda]
+    end
+
+    subgraph "Cleanup Layer"
+        SFN[Account Cleaner<br/>Step Function]
+        INIT[Initialize Cleanup<br/>Lambda]
+        CB[CodeBuild<br/>AWS Nuke Container]
+    end
+
+    subgraph "Data Layer"
+        LEASE_TBL[LeaseTable<br/>DynamoDB]
+        TEMPLATE_TBL[LeaseTemplateTable<br/>DynamoDB]
+        ACCOUNT_TBL[SandboxAccountTable<br/>DynamoDB]
+        APPCONFIG[AWS AppConfig<br/>Global + Nuke + Reporting]
+    end
+
+    subgraph "AWS Organization"
+        ORGS[AWS Organizations]
+        IDC[IAM Identity Center]
+        OUs["Sandbox OUs:<br/>Available | Active | CleanUp<br/>Quarantine | Frozen | Entry | Exit"]
     end
 
     subgraph "Satellite Services"
-        APPROVER[Approver]
-        DEPLOYER[Deployer]
-        COSTS[Cost Tracker]
-        BILLING[Billing Separator]
+        COSTS[Costs Satellite]
+        DEPLOYER[Deployer Satellite]
+        APPROVER[Approver Satellite]
     end
 
-    USERS -->|Requests| FRONTEND
-    FRONTEND -->|API Calls| API
-    API -->|Invoke| LAMBDA
-    LAMBDA -->|Read/Write| DDB
-    LAMBDA -->|Events| EB
-    LAMBDA -->|IAM/Accounts| IDC
-    LAMBDA -->|Account Mgmt| ORGS
-    EB -->|Triggers| LAMBDA
-    EB -->|Triggers| SFN
-    EB -->|Events| APPROVER
-    EB -->|Events| DEPLOYER
+    USERS -->|HTTPS| CF
+    ADMINS -->|HTTPS| CF
+    CF -->|Static assets| S3FE
+    CF -->|/api/*| WAF
+    WAF --> APIGW
+    APIGW --> AUTH
+    AUTH --> LEASES
+    AUTH --> TEMPLATES
+    AUTH --> ACCOUNTS
+    AUTH --> CONFIG
+    APIGW --> SSO
+
+    LEASES --> LEASE_TBL
+    LEASES --> ACCOUNT_TBL
+    LEASES --> TEMPLATE_TBL
+    LEASES --> EB
+    TEMPLATES --> TEMPLATE_TBL
+    ACCOUNTS --> ACCOUNT_TBL
+    CONFIG --> APPCONFIG
+
+    EB --> ALM
+    EB --> LM
+    EB --> ADM
+    EB --> EMAIL
+    EB --> SFN
     EB -->|Events| COSTS
-    EB -->|Events| BILLING
+    EB -->|Events| DEPLOYER
+    EB -->|Events| APPROVER
+
+    ALM --> ORGS
+    ALM --> IDC
+    ALM --> ACCOUNT_TBL
+    ALM --> LEASE_TBL
+    LM --> LEASE_TBL
+    LM --> EB
+
+    SFN --> INIT
+    SFN --> CB
+    CB -->|AWS Nuke| OUs
 ```
 
 ### CDK Stack Architecture
 
-The ISB Core is organized into four CDK stacks:
+The solution is organized into five CloudFormation stacks with clear separation of concerns. The AccountPool and IDC stacks deploy to the Organizations management account and IDC account respectively, while Data and Compute stacks deploy to the hub account. A StackSet deploys resources into each sandbox account.
 
 ```mermaid
-graph LR
-    subgraph "AccountPool Stack"
-        AP_DDB[DynamoDB Tables]
-        AP_LAMBDA[Pool Management]
-        AP_BUS[ISBEventBus]
+graph TD
+    subgraph "Org Management Account"
+        AP["AccountPool Stack<br/><i>OUs, SCPs, OrgMgtRole, SSM Param</i>"]
     end
 
-    subgraph "IDC Stack"
-        IDC_LAMBDA[Identity Lambdas]
-        IDC_SECRETS[Secrets Manager]
+    subgraph "IDC Account"
+        IDC_STACK["IDC Stack<br/><i>IdcRole, IDC Groups, Permission Sets, SSM Param</i>"]
     end
 
-    subgraph "Data Stack"
-        DATA_API[API Gateway]
-        DATA_LAMBDA[API Lambdas]
+    subgraph "Hub Account"
+        DATA["Data Stack<br/><i>DynamoDB Tables, AppConfig, KMS Key</i>"]
+        COMPUTE["Compute Stack<br/><i>API GW, CloudFront, Lambdas, Step Functions,<br/>EventBridge, CodeBuild, WAF</i>"]
     end
 
-    subgraph "Compute Stack"
-        COMPUTE_SFN[Step Functions]
-        COMPUTE_LAMBDA[Cleanup Lambdas]
-        COMPUTE_EB[EventBridge Rules]
+    subgraph "Sandbox Accounts (via StackSet)"
+        SA["SandboxAccount Stack<br/><i>Cleanup IAM Role</i>"]
     end
 
-    AP_BUS -->|Events| COMPUTE_EB
-    DATA_API -->|Invoke| DATA_LAMBDA
-    DATA_LAMBDA -->|Read/Write| AP_DDB
-    IDC_LAMBDA -->|Access| IDC_SECRETS
-    COMPUTE_SFN -->|Invoke| COMPUTE_LAMBDA
+    AP -->|RAM Share: AccountPool SSM Param| COMPUTE
+    IDC_STACK -->|RAM Share: IDC SSM Param| COMPUTE
+    DATA -->|SSM Param: Table Names, Config IDs| COMPUTE
+    AP -->|Auto-Deploy StackSet| SA
+    COMPUTE -->|IntermediateRole assumes| AP
+    COMPUTE -->|IntermediateRole assumes| IDC_STACK
 ```
+
+**Deployment order**: AccountPool -> IDC -> Data -> Compute
+
+**Source**: `source/infrastructure/lib/isb-account-pool-stack.ts`, `isb-idc-stack.ts`, `isb-data-stack.ts`, `isb-compute-stack.ts`
 
 ---
 
 ## CDK Stacks Deep Dive
 
-### 1. AccountPool Stack
+### 1. AccountPool Stack (`InnovationSandbox-AccountPool`)
 
-**Purpose:** Foundation stack managing data persistence and event infrastructure
+**Deploys to**: Organizations management account
 
-**Resources:**
-- **LeaseTable** (DynamoDB): Active leases with TTL-based expiration
-- **LeaseTemplateTable** (DynamoDB): Reusable lease configurations
-- **SandboxAccountTable** (DynamoDB): Pool account inventory
-- **ISBEventBus** (EventBridge): Central event routing
+**Purpose**: Creates the organizational structure, Service Control Policies, and cross-account roles for sandbox account management.
 
-**Key Features:**
-- GSI indexes for efficient querying
-- TTL attributes for automatic lease expiration
+**Resources created**:
+
+| Resource | Type | Purpose |
+|----------|------|---------|
+| `InnovationSandboxAccountPoolOu` | `CfnOrganizationalUnit` | Root OU for all sandbox accounts |
+| `AvailableOu` | `CfnOrganizationalUnit` | Accounts ready for leasing |
+| `ActiveOu` | `CfnOrganizationalUnit` | Currently leased accounts |
+| `CleanUpOu` | `CfnOrganizationalUnit` | Accounts undergoing AWS Nuke cleanup |
+| `QuarantineOu` | `CfnOrganizationalUnit` | Failed cleanup, manual review needed |
+| `FrozenOu` | `CfnOrganizationalUnit` | Frozen leases, resources preserved |
+| `EntryOu` | `CfnOrganizationalUnit` | New accounts being registered |
+| `ExitOu` | `CfnOrganizationalUnit` | Accounts being decommissioned |
+| `OrgMgtRole` | `IAM Role` | Assumed by hub for Organizations API calls |
+| 5 SCPs | `CfnPolicy` | Security guardrails (see below) |
+| `IsbStackSet` | `CfnStackSet` | Auto-deploys cleanup role to sandbox accounts |
+| `AccountPoolConfiguration` | `SSM Parameter` | Shared config (OU IDs, regions) via RAM |
+| `CostAllocationTagActivator` | Custom Resource | Activates ISB cost allocation tags |
+
+**Service Control Policies**:
+
+| SCP | Target | Purpose |
+|-----|--------|---------|
+| `AwsNukeSupportedServicesScp` | Root sandbox OU | Allow only AWS Nuke-supported services |
+| `RestrictionsScp` | Root sandbox OU | Restrict security, isolation, cost, and operations resources |
+| `ProtectISBResourcesScp` | Root sandbox OU | Protect ISB control plane resources |
+| `LimitRegionsScp` | Root sandbox OU | Restrict to configured AWS regions |
+| `WriteProtectionScp` | Available, CleanUp, Quarantine, Entry, Exit OUs | Block all create/modify actions |
+
+**Parameters**: `Namespace`, `HubAccountId`, `ParentOuId`, `IsbManagedRegions`
+
+**Source**: `source/infrastructure/lib/isb-account-pool-resources.ts`
+
+---
+
+### 2. IDC Stack (`InnovationSandbox-IDC`)
+
+**Deploys to**: IAM Identity Center account (often the Org management account)
+
+**Purpose**: Configures IAM Identity Center groups, permission sets, and cross-account roles for federated access.
+
+**Resources created**:
+
+| Resource | Type | Purpose |
+|----------|------|---------|
+| `IdcConfigurer` | Custom Resource Lambda | Creates Admin/Manager/User groups and permission sets in IDC |
+| `IdcRole` | `IAM Role` | Assumed by hub for Identity Store and SSO API calls |
+| `IdcConfiguration` | `SSM Parameter` | Shared config (group IDs, permission set ARNs) via RAM |
+
+**IdcRole permissions**:
+- `identitystore:GetUserId`, `DescribeUser` -- user lookup
+- `identitystore:ListGroups`, `ListGroupMemberships`, `ListGroupMembershipsForMember` -- group membership
+- `sso:ListPermissionSets`, `DescribePermissionSet` -- enumerate permission sets
+- `sso:CreateAccountAssignment`, `DeleteAccountAssignment`, `ListAccountAssignments` -- manage account access
+
+**Parameters**: `Namespace`, `OrgMgtAccountId`, `HubAccountId`, `IdentityStoreId`, `SsoInstanceArn`, `AdminGroupName`, `ManagerGroupName`, `UserGroupName`
+
+**Source**: `source/infrastructure/lib/isb-idc-resources.ts`
+
+---
+
+### 3. Data Stack (`InnovationSandbox-Data`)
+
+**Deploys to**: Hub account
+
+**Purpose**: Persistent data layer with DynamoDB tables and AppConfig configuration profiles.
+
+**DynamoDB Tables**:
+
+| Table | Partition Key | Sort Key | GSI | TTL | Purpose |
+|-------|--------------|----------|-----|-----|---------|
+| `SandboxAccountTable` | `awsAccountId` (String) | -- | -- | -- | Pool account inventory |
+| `LeaseTemplateTable` | `uuid` (String) | -- | -- | -- | Reusable lease configurations |
+| `LeaseTable` | `userEmail` (String) | `uuid` (String) | `StatusIndex` | `ttl` | Lease records and lifecycle |
+
+**LeaseTable GSI `StatusIndex`**: Partition key = `status`, Sort key = `originalLeaseTemplateUuid`
+
+**AppConfig Profiles**:
+- **Global Config**: Maintenance mode, lease limits, cleanup settings, auth config, email settings
+- **Nuke Config**: AWS Nuke YAML configuration (protected resources, settings, exclusions)
+- **Reporting Config**: Cost reporting group configuration
+
+All tables use:
+- PAY_PER_REQUEST billing mode
 - Point-in-time recovery enabled
-- Event-driven architecture foundation
+- Customer-managed KMS encryption
+- Deletion protection enabled in production mode
 
-**DynamoDB Schemas:**
+**Parameters**: `Namespace`
 
-```typescript
-// LeaseTable
-{
-  leaseId: string,                    // Partition Key
-  accountId: string,                  // AWS Account ID
-  ownerId: string,                    // User identifier
-  status: 'ACTIVE' | 'EXPIRED' | 'TERMINATED',
-  createdAt: number,                  // Epoch timestamp
-  expiresAt: number,                  // TTL attribute
-  templateId?: string,                // Reference to template
-  quota: {
-    budget: number,
-    duration: number
-  },
-  permissions: string[],              // Permission set ARNs
-  tags: Record<string, string>
-}
-
-// LeaseTemplateTable
-{
-  templateId: string,                 // Partition Key
-  name: string,
-  description: string,
-  defaultQuota: {
-    budget: number,
-    durationDays: number
-  },
-  permissionSets: string[],           // Default permissions
-  constraints: {
-    maxBudget?: number,
-    allowedRegions?: string[],
-    requiredTags?: string[]
-  },
-  isActive: boolean,
-  createdBy: string,
-  createdAt: number
-}
-
-// SandboxAccountTable
-{
-  accountId: string,                  // Partition Key
-  status: 'AVAILABLE' | 'LEASED' | 'QUARANTINE' | 'MAINTENANCE',
-  currentLeaseId?: string,
-  organizationalUnit: string,         // OU path
-  createdAt: number,
-  lastCleanedAt?: number,
-  metadata: {
-    region: string,
-    tags: Record<string, string>
-  }
-}
-```
-
-**GSI Indexes:**
-- `LeasesByOwner`: ownerId (PK), createdAt (SK)
-- `LeasesByStatus`: status (PK), expiresAt (SK)
-- `AccountsByStatus`: status (PK), accountId (SK)
+**Source**: `source/infrastructure/lib/isb-data-resources.ts`
 
 ---
 
-### 2. IDC Stack
+### 4. Compute Stack (`InnovationSandbox-Compute`)
 
-**Purpose:** AWS Identity Center integration for federated access management
+**Deploys to**: Hub account
 
-**Resources:**
-- Lambda functions for permission set management
-- Secrets Manager for IDC instance ARN/Store ID
-- IAM roles with Organizations and SSO Admin permissions
+**Purpose**: The main operational stack containing the API, frontend, event processing, account cleanup, and observability infrastructure.
 
-**Key Lambdas:**
-- `createPermissionSetAssignment`: Assigns users to accounts
-- `deletePermissionSetAssignment`: Revokes access on lease termination
-- `listPermissionSets`: Retrieves available permission templates
-- `syncIdentityStore`: Syncs users/groups from Identity Center
+**Major components**:
 
-**Integration Points:**
-```mermaid
-sequenceDiagram
-    participant API
-    participant Lambda
-    participant Secrets
-    participant IDC
-    participant Account
+| Component | Type | Source File |
+|-----------|------|------------|
+| `IsbRestApi` | API Gateway REST API + WAF | `components/api/rest-api-all.ts` |
+| `CloudFrontUiApi` | CloudFront + S3 frontend | `components/cloudfront/cloudfront-ui-api.ts` |
+| `ISBEventBus` | EventBridge custom event bus | `components/events/isb-internal-core.ts` |
+| `AccountCleaner` | Step Functions + CodeBuild | `components/account-cleaner/account-cleaner.ts` |
+| `IntermediateRole` | IAM Role for cross-account | `helpers/isb-roles.ts` |
+| `LeaseMonitoringLambda` | Scheduled Lambda | `components/account-management/lease-monitoring-lambda.ts` |
+| `AccountLifecycleManagementLambda` | Event-driven Lambda | `components/account-management/account-lifecycle-management-lambda.ts` |
+| `AccountDriftMonitoringLambda` | Scheduled Lambda | `components/account-management/account-drift-monitoring-lambda.ts` |
+| `EmailNotificationLambda` | Event-driven Lambda | `components/notification/email-notification.ts` |
+| `CostReportingLambda` | Reporting Lambda | `components/observability/cost-reporting-lambda.ts` |
+| `GroupCostReportingLambda` | Reporting Lambda | `components/observability/group-cost-reporting-lambda.ts` |
+| `LogArchiving` | Log management | `components/observability/log-archiving.ts` |
+| `LogInsightsQueries` | Pre-built queries | `components/observability/log-insights-queries.ts` |
+| `ApplicationInsights` | CloudWatch App Insights | `components/observability/app-insights.ts` |
 
-    API->>Lambda: Create Lease Request
-    Lambda->>Secrets: Get IDC Config
-    Secrets-->>Lambda: Instance ARN
-    Lambda->>IDC: CreateAccountAssignment
-    IDC->>Account: Provision Permission Set
-    Account-->>IDC: Success
-    IDC-->>Lambda: Assignment ARN
-    Lambda-->>API: Lease Created
-```
+**Parameters**: `Namespace`, `OrgMgtAccountId`, `IdcAccountId`, `AllowListedIPRanges`, `UseStableTagging`, `AcceptSolutionTermsOfUse`
 
-**Security:**
-- Least privilege IAM policies
-- Secrets rotation supported
-- CloudTrail audit logging
-- VPC endpoints for private connectivity (optional)
+**Source**: `source/infrastructure/lib/isb-compute-resources.ts`
 
 ---
 
-### 3. Data Stack
+### 5. SandboxAccount Stack (via StackSet)
 
-**Purpose:** RESTful API for lease and account management
+**Deploys to**: Every account in the sandbox OU (auto-deployed)
 
-**API Gateway Structure:**
-```
-POST   /leases                    - Create new lease
-GET    /leases/{leaseId}          - Get lease details
-PUT    /leases/{leaseId}          - Update lease (extend, modify)
-DELETE /leases/{leaseId}          - Terminate lease
-GET    /leases                    - List leases (with filters)
+**Purpose**: Creates the IAM role that CodeBuild assumes during AWS Nuke cleanup.
 
-GET    /templates                 - List lease templates
-GET    /templates/{templateId}    - Get template details
-POST   /templates                 - Create template (admin)
+**Resources**: Single IAM Role (`{namespace}_IsbCleanupRole`) with permissions to delete resources in the account, assumed by the hub account's IntermediateRole.
 
-GET    /accounts                  - List pool accounts
-GET    /accounts/{accountId}      - Get account status
-POST   /accounts                  - Add account to pool (admin)
-PUT    /accounts/{accountId}      - Update account status
-```
-
-**API Lambda Functions:**
-
-1. **leaseCreate**
-   - Validates request against templates
-   - Checks quota limits
-   - Finds available account
-   - Creates DynamoDB lease record
-   - Publishes `LeaseCreated` event
-   - Triggers IDC permission assignment
-
-2. **leaseGet**
-   - Retrieves lease by ID
-   - Enriches with account details
-   - Returns sanitized response
-
-3. **leaseUpdate**
-   - Validates modification permissions
-   - Updates lease attributes
-   - Publishes `LeaseModified` event
-   - Supports extension requests
-
-4. **leaseDelete**
-   - Sets lease status to TERMINATED
-   - Publishes `LeaseTerminated` event
-   - Triggers cleanup workflow
-   - Revokes IDC access
-
-5. **leaseList**
-   - Supports filtering by owner, status, template
-   - Pagination with LastEvaluatedKey
-   - Sorting by creation/expiration date
-
-6. **templateOperations** (CRUD)
-   - Template management for admins
-   - Validation logic for constraints
-   - Active/inactive flagging
-
-7. **accountOperations** (CRUD)
-   - Pool account inventory management
-   - Status transitions (AVAILABLE <-> LEASED <-> QUARANTINE)
-   - Metadata updates
-
-**Authentication & Authorization:**
-- API Gateway with IAM authorization
-- Cognito User Pool integration (assumed)
-- Request validation via JSON schemas
-- Rate limiting with usage plans
-
-**Response Format:**
-```json
-{
-  "success": true,
-  "data": {
-    "leaseId": "lease-abc123",
-    "accountId": "123456789012",
-    "status": "ACTIVE",
-    "expiresAt": 1735689600,
-    "accessUrl": "https://signin.aws.amazon.com/..."
-  },
-  "metadata": {
-    "requestId": "req-xyz",
-    "timestamp": 1704067200
-  }
-}
-```
-
----
-
-### 4. Compute Stack
-
-**Purpose:** Automated account cleanup and maintenance workflows
-
-**Step Functions State Machine:**
-
-```mermaid
-stateDiagram-v2
-    [*] --> DetectExpiredLeases
-    DetectExpiredLeases --> FetchLeaseDetails
-    FetchLeaseDetails --> RevokeAccess
-    RevokeAccess --> InitiateCleanup
-    InitiateCleanup --> SnapshotResources
-    SnapshotResources --> DeleteResources
-    DeleteResources --> VerifyCleanup
-    VerifyCleanup --> QuarantineOrRelease
-    QuarantineOrRelease --> UpdateLeaseStatus
-    UpdateLeaseStatus --> [*]
-
-    QuarantineOrRelease --> Quarantine: Resources Remain
-    QuarantineOrRelease --> Release: Clean
-    Quarantine --> [*]
-    Release --> [*]
-```
-
-**Cleanup Lambda Functions:**
-
-1. **detectExpiredLeases**
-   - Scheduled EventBridge rule (every 15 minutes)
-   - Queries LeaseTable for TTL-expired records
-   - Publishes `LeaseExpired` events
-   - Handles grace periods
-
-2. **revokeAccountAccess**
-   - Triggered by `LeaseTerminated`/`LeaseExpired` events
-   - Calls IDC to delete permission set assignments
-   - Validates access revocation
-   - Retries on failure (exponential backoff)
-
-3. **inventoryResources**
-   - Cross-region AWS Config aggregator queries
-   - Generates snapshot of resources to delete
-   - Identifies protected resources (e.g., CloudTrail)
-   - Outputs deletion plan
-
-4. **deleteEC2Resources**
-   - Terminates EC2 instances
-   - Deletes security groups (after dependency resolution)
-   - Removes ENIs, EIPs, key pairs
-   - Handles regional cleanup
-
-5. **deleteS3Buckets**
-   - Lists all S3 buckets in account
-   - Empties bucket contents (including versions)
-   - Deletes buckets
-   - Handles cross-region replication
-
-6. **deleteIAMResources**
-   - Removes IAM users, roles, policies
-   - Detaches managed policies
-   - Deletes access keys and credentials
-   - Preserves service-linked roles
-
-7. **deleteCloudFormationStacks**
-   - Lists all stacks across regions
-   - Deletes in reverse dependency order
-   - Handles stack deletion failures
-   - Retains specific stacks if configured
-
-8. **verifyCleanup**
-   - Re-inventories account resources
-   - Compares against pre-cleanup snapshot
-   - Generates cleanup report
-   - Determines quarantine vs. release
-
-9. **updateAccountStatus**
-   - Updates SandboxAccountTable status
-   - Sets lastCleanedAt timestamp
-   - Publishes `AccountCleaned` or `AccountQuarantined` event
-   - Triggers manual review if needed
-
-**EventBridge Rules:**
-
-| Rule Name | Schedule | Target | Purpose |
-|-----------|----------|--------|---------|
-| `CheckExpiredLeases` | rate(15 minutes) | detectExpiredLeases | Find expired leases |
-| `DailyPoolHealthCheck` | cron(0 9 * * ? *) | poolHealthCheck | Monitor pool capacity |
-| `CleanupRetry` | rate(1 hour) | verifyCleanup | Retry quarantined cleanups |
-
-**Event Patterns:**
-
-```json
-{
-  "source": ["isb.leases"],
-  "detail-type": ["LeaseTerminated", "LeaseExpired"],
-  "detail": {
-    "leaseId": [{"exists": true}],
-    "accountId": [{"exists": true}]
-  }
-}
-```
+**Source**: `source/infrastructure/lib/isb-sandbox-account-resources.ts`, `isb-sandbox-account-stack.ts`
 
 ---
 
 ## Lambda Function Catalog
 
-### API Layer (7 functions)
+### API Layer
 
-| Function | Trigger | Runtime | Timeout | Memory | Purpose |
-|----------|---------|---------|---------|--------|---------|
-| `leaseCreate` | API Gateway POST /leases | Node.js 20 | 30s | 512MB | Create new lease |
-| `leaseGet` | API Gateway GET /leases/{id} | Node.js 20 | 10s | 256MB | Retrieve lease |
-| `leaseUpdate` | API Gateway PUT /leases/{id} | Node.js 20 | 30s | 512MB | Modify lease |
-| `leaseDelete` | API Gateway DELETE /leases/{id} | Node.js 20 | 30s | 512MB | Terminate lease |
-| `leaseList` | API Gateway GET /leases | Node.js 20 | 30s | 512MB | Query leases |
-| `templateOperations` | API Gateway /templates/* | Node.js 20 | 15s | 256MB | Template CRUD |
-| `accountOperations` | API Gateway /accounts/* | Node.js 20 | 15s | 256MB | Account CRUD |
+| Function | Source | Trigger | Purpose |
+|----------|--------|---------|---------|
+| `AuthorizerLambdaFunction` | `lambdas/api/authorizer/` | API Gateway Request Authorizer | JWT validation and role-based access control |
+| `SsoHandler` | `lambdas/api/sso-handler/` | API Gateway `/auth/{action+}` (no auth) | SAML SSO login/logout, JWT token issuance |
+| `LeasesLambdaFunction` | `lambdas/api/leases/` | API Gateway `/leases/*` | CRUD for leases, approval, freeze/unfreeze, terminate |
+| `LeaseTemplatesLambdaFunction` | `lambdas/api/lease-templates/` | API Gateway `/leaseTemplates/*` | CRUD for lease templates |
+| `AccountsLambdaFunction` | `lambdas/api/accounts/` | API Gateway `/accounts/*` | Account pool management, registration |
+| `ConfigurationsLambdaFunction` | `lambdas/api/configurations/` | API Gateway `/configurations` | Global/nuke/reporting config read/write |
 
-### Identity Layer (4 functions)
+### Account Management Layer
 
-| Function | Trigger | Runtime | Timeout | Memory | Purpose |
-|----------|---------|---------|---------|--------|---------|
-| `createPermissionSetAssignment` | EventBridge LeaseCreated | Python 3.12 | 60s | 256MB | Grant account access |
-| `deletePermissionSetAssignment` | EventBridge LeaseTerminated | Python 3.12 | 60s | 256MB | Revoke account access |
-| `listPermissionSets` | API Gateway GET /permission-sets | Python 3.12 | 15s | 256MB | List available permissions |
-| `syncIdentityStore` | EventBridge Scheduled | Python 3.12 | 300s | 512MB | Sync users/groups |
+| Function | Source | Trigger | Purpose |
+|----------|--------|---------|---------|
+| `AccountLifecycleManagementLambda` | `lambdas/account-management/account-lifecycle-management/` | EventBridge via SQS | Responds to lease events; moves accounts between OUs, manages IDC assignments |
+| `LeaseMonitoringLambda` | `lambdas/account-management/lease-monitoring/` | EventBridge scheduled rule | Checks budgets and durations for active/frozen leases, publishes alerts |
+| `AccountDriftMonitoringLambda` | `lambdas/account-management/account-drift-monitoring/` | EventBridge scheduled rule | Detects drift in sandbox account configurations |
 
-### Cleanup Layer (8 functions)
+### Cleanup Layer
 
-| Function | Trigger | Runtime | Timeout | Memory | Purpose |
-|----------|---------|---------|---------|--------|---------|
-| `detectExpiredLeases` | EventBridge rate(15m) | Python 3.12 | 60s | 256MB | Find expired leases |
-| `revokeAccountAccess` | Step Functions | Python 3.12 | 60s | 256MB | Revoke IDC access |
-| `inventoryResources` | Step Functions | Python 3.12 | 900s | 1024MB | Snapshot resources |
-| `deleteEC2Resources` | Step Functions | Python 3.12 | 900s | 512MB | Clean EC2 |
-| `deleteS3Buckets` | Step Functions | Python 3.12 | 900s | 512MB | Clean S3 |
-| `deleteIAMResources` | Step Functions | Python 3.12 | 900s | 512MB | Clean IAM |
-| `deleteCloudFormationStacks` | Step Functions | Python 3.12 | 900s | 512MB | Delete stacks |
-| `verifyCleanup` | Step Functions | Python 3.12 | 300s | 512MB | Verify completion |
+| Function | Source | Trigger | Purpose |
+|----------|--------|---------|---------|
+| `InitializeCleanupLambda` | `lambdas/account-cleanup/initialize-cleanup/` | Step Functions invoke | Validates cleanup preconditions, loads config, prevents duplicate cleanups |
+
+### Notification Layer
+
+| Function | Source | Trigger | Purpose |
+|----------|--------|---------|---------|
+| `EmailNotificationLambda` | `lambdas/notification/email-notification/` | EventBridge via SQS | Sends SES emails for lease events (created, approved, denied, alerts, etc.) |
+
+### Observability Layer
+
+| Function | Source | Trigger | Purpose |
+|----------|--------|---------|---------|
+| `CostReportingLambda` | `lambdas/metrics/cost-reporting/` | Scheduled | Per-account cost reporting via Cost Explorer |
+| `GroupCostReportingLambda` | `lambdas/metrics/group-cost-reporting/` | Scheduled | Aggregated cost reporting by cost report group |
+| `DeploymentSummaryHeartbeat` | `lambdas/metrics/deployment-summary-heartbeat/` | Scheduled | Anonymized metrics for AWS Solutions |
+| `LogArchivingLambda` | `lambdas/metrics/log-archiving/` | Scheduled | Archives logs to S3 |
+| `LogSubscriberLambda` | `lambdas/metrics/log-subscriber/` | Custom Resource | Manages CloudWatch log subscriptions |
+
+### Custom Resource Layer
+
+| Function | Source | Trigger | Purpose |
+|----------|--------|---------|---------|
+| `IdcConfigurerLambda` | `lambdas/custom-resources/idc-configurer/` | CloudFormation | Creates IDC groups and permission sets |
+| `DeploymentUUIDLambda` | `lambdas/custom-resources/deployment-uuid/` | CloudFormation | Generates unique deployment ID |
+| `CostAllocationTagActivator` | `lambdas/custom-resources/cost-allocation-tag-activator/` | CloudFormation | Activates cost allocation tags |
+| `SharedJsonParamParser` | `lambdas/custom-resources/shared-json-param-parser/` | CloudFormation | Parses shared SSM parameters from other stacks |
+| `JwtSecretRotator` | `lambdas/helpers/secret-rotator/` | Secrets Manager rotation schedule | Rotates JWT signing secret every 30 days |
+
+**Runtime**: All Lambdas are TypeScript compiled to ES modules, running on Node.js 22.
 
 ---
 
-## React Frontend
+## REST API Endpoints
 
-**Architecture:**
-- Single Page Application (SPA)
-- React 18 with TypeScript
-- Material-UI component library
-- API Gateway integration via axios
-- Cognito authentication
+### API Gateway Structure
 
-**Key Pages:**
+The API is exposed through CloudFront at `/api/*`, with a CloudFront Function stripping the `/api` prefix before forwarding to API Gateway. Authentication uses a custom Request Authorizer that validates JWT tokens.
 
-1. **Dashboard**
-   - Active leases overview
-   - Quick stats (budget consumed, days remaining)
-   - Recent activity feed
-   - Pool capacity widget
+| Method | Path | Roles | Lambda | Purpose |
+|--------|------|-------|--------|---------|
+| GET | `/leases` | User, Manager, Admin | Leases | List leases |
+| POST | `/leases` | User, Manager, Admin | Leases | Create lease |
+| GET | `/leases/{leaseId}` | User, Manager, Admin | Leases | Get lease details |
+| PATCH | `/leases/{leaseId}` | Manager, Admin | Leases | Update lease |
+| POST | `/leases/{leaseId}/review` | Manager, Admin | Leases | Approve/deny lease |
+| POST | `/leases/{leaseId}/terminate` | Manager, Admin | Leases | Terminate lease |
+| POST | `/leases/{leaseId}/freeze` | Manager, Admin | Leases | Freeze lease |
+| POST | `/leases/{leaseId}/unfreeze` | Manager, Admin | Leases | Unfreeze lease |
+| GET | `/leaseTemplates` | User, Manager, Admin | LeaseTemplates | List templates |
+| POST | `/leaseTemplates` | Manager, Admin | LeaseTemplates | Create template |
+| GET | `/leaseTemplates/{uuid}` | User, Manager, Admin | LeaseTemplates | Get template |
+| PUT | `/leaseTemplates/{uuid}` | Manager, Admin | LeaseTemplates | Update template |
+| DELETE | `/leaseTemplates/{uuid}` | Manager, Admin | LeaseTemplates | Delete template |
+| GET | `/accounts` | Admin | Accounts | List pool accounts |
+| POST | `/accounts` | Admin | Accounts | Register accounts |
+| GET | `/accounts/{id}` | Admin | Accounts | Get account details |
+| POST | `/accounts/{id}/retryCleanup` | Admin | Accounts | Retry failed cleanup |
+| POST | `/accounts/{id}/eject` | Admin | Accounts | Eject account from pool |
+| GET | `/accounts/unregistered` | Admin | Accounts | List unregistered accounts in sandbox OUs |
+| GET | `/configurations` | User, Manager, Admin | Configurations | Read AppConfig settings |
+| GET/POST | `/auth/{action+}` | (No auth) | SSO Handler | SAML SSO login/logout/callback |
 
-2. **Lease Management**
-   - Create lease wizard (template selection)
-   - Active leases table (sortable, filterable)
-   - Lease detail modal (extend, terminate)
-   - Access URL generation
+**WAF rules**: IP allowlist, rate limiting (200 req/min per IP), AWS Managed Rules (Common, IP Reputation, Anonymous IP).
 
-3. **Account Pool**
-   - Pool status visualization
-   - Account health metrics
-   - Quarantine queue management
-   - Manual account operations (admin)
-
-4. **Templates**
-   - Template library browser
-   - Template editor (admin)
-   - Usage statistics
-   - Template cloning
-
-5. **Reports**
-   - Utilization dashboards
-   - Cost reports (integration with Costs satellite)
-   - Audit logs
-   - Export functionality
-
-**State Management:**
-- React Context for global state
-- Local state for component data
-- API response caching (React Query)
-
-**Build & Deploy:**
-- Vite bundler
-- S3 static hosting
-- CloudFront distribution
-- CodePipeline CI/CD
+**Source**: `source/lambdas/api/authorizer/src/authorization-map.ts`, `source/infrastructure/lib/components/api/`
 
 ---
 
 ## Event-Driven Architecture
 
-### Event Flow
+### EventBridge Event Catalog
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant API
-    participant Lambda
-    participant DDB
-    participant EventBridge
-    participant Approver
-    participant Deployer
-    participant IDC
+All events flow through the `ISBEventBus` custom EventBridge bus, which has a DLQ and logs all events to CloudWatch.
 
-    User->>API: Create Lease Request
-    API->>Lambda: leaseCreate
-    Lambda->>DDB: Find Available Account
-    DDB-->>Lambda: Account ID
-    Lambda->>DDB: Create Lease Record
-    Lambda->>EventBridge: Publish LeaseCreated
-    EventBridge->>Approver: Trigger Scoring
-    EventBridge->>IDC: Trigger Access Grant
-    EventBridge->>Deployer: Trigger Template Deploy (if applicable)
-    IDC-->>User: Access Email Sent
-    Approver-->>EventBridge: ApprovalComplete
-    Deployer-->>EventBridge: DeploymentComplete
-```
+| Event DetailType | Source | Trigger | Consumers |
+|-----------------|--------|---------|-----------|
+| `LeaseRequested` | `leases-api` | POST /leases (pending approval) | Email notification |
+| `LeaseApproved` | `leases-api` | Approval or auto-approve | Account Lifecycle Manager, Email, Deployer satellite |
+| `LeaseDenied` | `leases-api` | Manager denial | Email notification |
+| `LeaseTerminated` | `leases-api` | Manual termination | Account Lifecycle Manager, Email, Costs satellite |
+| `LeaseFrozen` | `leases-api` | Freeze request | Account Lifecycle Manager, Email |
+| `LeaseUnfrozen` | `leases-api` | Unfreeze request | Account Lifecycle Manager, Email |
+| `LeaseBudgetExceeded` | `lease-monitoring` | Cost exceeds maxSpend | Account Lifecycle Manager, Email |
+| `LeaseExpired` | `lease-monitoring` | Duration exceeded | Account Lifecycle Manager, Email |
+| `LeaseBudgetThresholdAlert` | `lease-monitoring` | Cost crosses threshold | Email notification |
+| `LeaseDurationThresholdAlert` | `lease-monitoring` | Time threshold breached | Email notification |
+| `LeaseFreezingThresholdAlert` | `lease-monitoring` | 90% budget threshold | Account Lifecycle Manager (auto-freeze) |
+| `CleanAccountRequest` | `account-lifecycle-manager` | Lease terminal state | Account Cleaner Step Function |
+| `AccountCleanupSucceeded` | `account-cleaner` | AWS Nuke success | Account Lifecycle Manager |
+| `AccountCleanupFailed` | `account-cleaner` | AWS Nuke failure | Account Lifecycle Manager |
+| `AccountQuarantined` | `account-lifecycle-manager` | Cleanup exhausted retries | Email notification |
+| `AccountDriftDetected` | `account-drift-monitoring` | Config drift found | Account Lifecycle Manager |
+| `GroupCostReportGenerated` | `group-cost-reporting` | Scheduled report | Email notification |
+| `GroupCostReportGeneratedFailure` | `group-cost-reporting` | Report generation failed | Email notification |
 
-### Event Catalog
-
-**Published Events:**
-
-| Event Type | Source | Detail | Purpose |
-|------------|--------|--------|---------|
-| `LeaseCreated` | isb.leases | leaseId, accountId, ownerId | Notify satellite services |
-| `LeaseModified` | isb.leases | leaseId, changes | Track modifications |
-| `LeaseTerminated` | isb.leases | leaseId, accountId | Trigger cleanup |
-| `LeaseExpired` | isb.leases | leaseId, accountId | Auto-terminate expired |
-| `AccountCleaned` | isb.accounts | accountId | Return to pool |
-| `AccountQuarantined` | isb.accounts | accountId, reason | Manual review needed |
-| `PoolCapacityLow` | isb.pool | availableCount, threshold | Alert admins |
-
-**Consumed Events:**
-
-| Event Type | Source | Consumer | Action |
-|------------|--------|----------|--------|
-| `ApprovalComplete` | approver | leaseUpdate | Update lease with score |
-| `DeploymentComplete` | deployer | leaseUpdate | Mark template deployed |
-| `CostAlertTriggered` | costs | leaseUpdate | Flag overspending |
+**Source**: `source/common/events/index.ts`, `source/common/events/*.ts`
 
 ---
 
-## Configuration & Deployment
+## Data Schemas
 
-### Environment Variables
+### LeaseTable Schema (Zod-validated)
 
-**Common:**
-```bash
-ACCOUNT_TABLE_NAME=SandboxAccountTable
-LEASE_TABLE_NAME=LeaseTable
-TEMPLATE_TABLE_NAME=LeaseTemplateTable
-EVENT_BUS_NAME=ISBEventBus
-AWS_REGION=eu-west-2
+The lease schema uses a discriminated union based on `status`:
+
 ```
+LeaseKey: { userEmail: string (email), uuid: string (UUID) }
 
-**IDC Stack:**
-```bash
-IDC_INSTANCE_ARN=arn:aws:sso:::instance/ssoins-xxxxx
-IDC_STORE_ID=d-xxxxxxxxxx
-SECRET_NAME=idc-config
-```
+PendingLease: LeaseKey + {
+  status: "PendingApproval",
+  originalLeaseTemplateUuid, originalLeaseTemplateName,
+  maxSpend?, leaseDurationInHours?, budgetThresholds?, durationThresholds?,
+  costReportGroup?, comments?, createdBy?,
+  versionNumber, createdDate, lastModifiedDate
+}
 
-**Compute Stack:**
-```bash
-STATE_MACHINE_ARN=arn:aws:states:eu-west-2:xxxxx:stateMachine:AccountCleanup
-CLEANUP_TIMEOUT_MINUTES=120
-QUARANTINE_THRESHOLD_DAYS=7
-```
+ApprovalDeniedLease: PendingLease + {
+  status: "ApprovalDenied",
+  ttl: number (Unix timestamp for DynamoDB TTL)
+}
 
-### CDK Deployment
+MonitoredLease (Active | Frozen): PendingLease + {
+  status: "Active" | "Frozen",
+  awsAccountId, approvedBy (email | "AUTO_APPROVED"),
+  startDate (ISO 8601), expirationDate? (ISO 8601),
+  lastCheckedDate (ISO 8601), totalCostAccrued: number
+}
 
-```bash
-# Install dependencies
-npm install
-
-# Synthesize CloudFormation
-cdk synth
-
-# Deploy all stacks
-cdk deploy --all --require-approval never
-
-# Deploy specific stack
-cdk deploy AccountPoolStack
-
-# Stack deployment order (due to dependencies)
-cdk deploy AccountPoolStack       # Foundation
-cdk deploy IdcStack              # Identity
-cdk deploy DataStack             # API
-cdk deploy ComputeStack          # Automation
-```
-
-### Stack Dependencies
-
-```mermaid
-graph TD
-    AP[AccountPoolStack] --> IDC[IdcStack]
-    AP --> DATA[DataStack]
-    AP --> COMPUTE[ComputeStack]
-    IDC --> DATA
-    DATA --> COMPUTE
-```
-
----
-
-## Integration Points
-
-### AWS Organizations
-- **Purpose:** Account creation and OU management
-- **Permissions:** `organizations:CreateAccount`, `organizations:MoveAccount`
-- **Pattern:** Boto3 SDK calls from Lambda
-- **Rate Limits:** 1 CreateAccount per 30 seconds
-
-### AWS Identity Center
-- **Purpose:** Federated access management
-- **Permissions:** `sso:CreateAccountAssignment`, `sso-directory:ListUsers`
-- **Pattern:** Python SDK with retry logic
-- **Caching:** Permission set ARNs cached in SSM Parameter Store
-
-### AWS Control Tower
-- **Purpose:** Baseline account configuration
-- **Interaction:** Passive (accounts created in CT-managed OUs)
-- **Guardrails:** Enforced by Control Tower SCPs
-- **Events:** ControlTowerExecutionComplete consumed
-
-### Satellite Services
-- **Approver:** Listens for `LeaseCreated`, publishes `ApprovalComplete`
-- **Deployer:** Listens for `LeaseCreated`, deploys CloudFormation templates
-- **Costs:** Listens for `LeaseTerminated`, collects cost data after 24h
-- **Billing Separator:** Listens for `LeaseTerminated`, quarantines accounts 72h
-
----
-
-## Operational Considerations
-
-### Monitoring
-
-**CloudWatch Metrics:**
-- `PoolCapacity` - Available accounts
-- `ActiveLeases` - Current leases
-- `CleanupSuccessRate` - Percentage of clean deletions
-- `APILatency` - Response times
-- `LeaseCreationRate` - Leases per hour
-
-**CloudWatch Alarms:**
-- Low pool capacity (< 10 accounts)
-- High API error rate (> 5%)
-- Cleanup failures (> 2 consecutive)
-- DynamoDB throttling
-- Lambda duration approaching timeout
-
-**CloudWatch Dashboards:**
-- Real-time lease activity
-- Pool health metrics
-- Cost attribution by lease
-- API performance
-
-### Logging
-
-**Log Groups:**
-- `/aws/lambda/isb-*` - Lambda execution logs
-- `/aws/apigateway/isb-api` - API access logs
-- `/aws/states/account-cleanup` - Step Functions logs
-
-**Log Retention:** 30 days (configurable)
-
-**Structured Logging:**
-```json
-{
-  "timestamp": "2024-01-01T12:00:00Z",
-  "level": "INFO",
-  "requestId": "abc-123",
-  "leaseId": "lease-xyz",
-  "action": "CREATE_LEASE",
-  "accountId": "123456789012",
-  "duration": 1234,
-  "status": "SUCCESS"
+ExpiredLease: MonitoredLease + {
+  status: "Expired" | "BudgetExceeded" | "ManuallyTerminated" | "AccountQuarantined" | "Ejected",
+  endDate (ISO 8601), ttl: number
 }
 ```
 
-### Backup & Recovery
+**Source**: `source/common/data/lease/lease.ts`
 
-**DynamoDB:**
-- Point-in-time recovery enabled (35 days)
-- Daily automated backups
-- Cross-region backup replication (optional)
+### SandboxAccountTable Schema
 
-**State Recovery:**
-- Lease state reconstructable from DynamoDB
-- Event history in EventBridge archives (7 days)
-- CloudTrail for audit reconstruction
+```
+SandboxAccount: {
+  awsAccountId: string (12 digits),
+  email?: string,
+  name?: string (max 50),
+  status: "Available" | "Active" | "CleanUp" | "Quarantine" | "Frozen",
+  driftAtLastScan?: boolean,
+  cleanupExecutionContext?: {
+    stateMachineExecutionArn: string,
+    stateMachineExecutionStartTime: string (ISO 8601)
+  },
+  versionNumber, createdDate, lastModifiedDate
+}
+```
 
-### Cost Optimization
+**Source**: `source/common/data/sandbox-account/sandbox-account.ts`
 
-**DynamoDB:**
-- On-demand billing for variable workloads
-- Consider provisioned capacity for predictable traffic
-- TTL for automatic expiration (no cost)
+### LeaseTemplateTable Schema
 
-**Lambda:**
-- Right-sized memory allocation
-- Provisioned concurrency for API functions (optional)
-- Arm64 architecture for cost savings
+```
+LeaseTemplate: {
+  uuid: string (UUID),
+  name: string (1-50 chars),
+  description?: string,
+  requiresApproval: boolean,
+  createdBy: string (email),
+  visibility: "PUBLIC" | "PRIVATE",
+  maxSpend?: number (> 0),
+  budgetThresholds?: [{ dollarsSpent: number, action: "ALERT" | "FREEZE_ACCOUNT" }],
+  leaseDurationInHours?: number (> 0),
+  durationThresholds?: [{ hoursRemaining: number, action: "ALERT" | "FREEZE_ACCOUNT" }],
+  costReportGroup?: string (1-50 chars),
+  versionNumber, createdDate, lastModifiedDate
+}
+```
 
-**API Gateway:**
-- HTTP API cheaper than REST API (consider migration)
-- Caching enabled for GET endpoints (300s TTL)
-
----
-
-## Issues & Recommendations
-
-### Current Issues
-
-1. **No Lease Extension Workflow**
-   - Users cannot extend leases beyond initial duration
-   - Workaround: Create new lease (loses context)
-   - **Fix:** Implement `leaseUpdate` extension logic with quota validation
-
-2. **Cleanup State Machine Single-Region**
-   - Step Functions only cleans eu-west-2
-   - Multi-region resources orphaned
-   - **Fix:** Add parallel regional cleanup steps
-
-3. **No Cost Quota Enforcement**
-   - Budget alerts exist but no automatic suspension
-   - Risk of overspending
-   - **Fix:** Integrate with Costs satellite for real-time enforcement
-
-4. **Missing Lease Approval Workflow**
-   - All leases auto-approved
-   - No admin review gate
-   - **Fix:** Optional approval step before `LeaseCreated` event
-
-5. **Frontend Not Production-Hardened**
-   - No error boundaries
-   - Limited input validation
-   - **Fix:** Add comprehensive error handling and form validation
-
-### Architectural Recommendations
-
-1. **Implement Lease Scheduling**
-   - Allow future-dated lease reservations
-   - Improve resource planning
-
-2. **Add Multi-Tenancy Support**
-   - Team-level lease management
-   - Shared quotas and templates
-
-3. **Enhanced Audit Trail**
-   - DynamoDB Streams to S3 for compliance
-   - Searchable audit log interface
-
-4. **Disaster Recovery**
-   - Hot standby in alternate region
-   - Automated failover procedures
-
-5. **Performance Optimization**
-   - DynamoDB Global Tables for multi-region writes
-   - API Gateway regional endpoints
-   - Lambda@Edge for frontend assets
+**Source**: `source/common/data/lease-template/lease-template.ts`
 
 ---
 
-## Security Considerations
+## Cross-Account Role Chain
 
-### IAM Permissions
+The ISB uses a two-hop role chain for cross-account operations:
 
-**Principle of Least Privilege:**
-- Lambda execution roles scoped to specific resources
-- No wildcards in policy statements
-- Resource-based policies on DynamoDB tables
+```mermaid
+sequenceDiagram
+    participant Lambda as Hub Lambda
+    participant IR as IntermediateRole<br/>(Hub Account)
+    participant OrgRole as OrgMgtRole<br/>(Org Mgmt Account)
+    participant IdcRole as IdcRole<br/>(IDC Account)
+    participant SandboxRole as CleanupRole<br/>(Sandbox Account)
 
-**Cross-Account Access:**
-- Assumed roles with MFA required
-- External ID for third-party access
-- Time-limited session tokens
+    Lambda->>IR: AssumeRole
+    IR->>OrgRole: AssumeRole (Organizations API)
+    OrgRole-->>Lambda: Credentials
 
-### Data Protection
+    IR->>IdcRole: AssumeRole (Identity Store / SSO API)
+    IdcRole-->>Lambda: Credentials
 
-**Encryption at Rest:**
-- DynamoDB tables encrypted with AWS managed CMKs
-- Consider CMKs for sensitive templates
+    Note over Lambda,SandboxRole: During cleanup only
+    IR->>SandboxRole: AssumeRole (via CodeBuild)
+    SandboxRole-->>Lambda: Credentials for AWS Nuke
+```
 
-**Encryption in Transit:**
-- TLS 1.2+ for all API calls
-- VPC endpoints for internal communication
-
-**PII Handling:**
-- No PII stored in DynamoDB (ownerId is UUID)
-- User data in Identity Center only
-- GDPR compliance considerations
-
-### Network Security
-
-**API Gateway:**
-- Resource policies restricting source IPs (optional)
-- WAF integration for DDoS protection
-- Rate limiting per API key
-
-**Lambda:**
-- VPC deployment optional (consider for compliance)
-- Security groups restricting outbound traffic
-- PrivateLink for AWS service access
+Each role in the chain trusts only the IntermediateRole, which in turn only allows assumption by specific Lambda execution roles. The IntermediateRole ARN is verified via `aws:PrincipalArn` conditions.
 
 ---
 
-## Testing Strategy
+## Configuration via AppConfig
 
-### Unit Tests
-- Lambda function logic (Jest/pytest)
-- API request validation
-- DynamoDB schema validation
-- 80% code coverage target
+ISB uses AWS AppConfig for runtime configuration with three profiles:
 
-### Integration Tests
-- API endpoint testing (Postman/Newman)
-- EventBridge event routing
-- Step Functions state transitions
-- DynamoDB integration
+**Global Config** (`global-config.yaml`):
+- `maintenanceMode`: boolean (blocks new lease requests)
+- `termsOfService`: multi-line text displayed during lease request
+- `leases.requireMaxBudget/maxBudget/requireMaxDuration/maxDurationHours/maxLeasesPerUser/ttl`
+- `cleanup.numberOfFailedAttemptsToCancelCleanup/waitBeforeRetryFailedAttemptSeconds/numberOfSuccessfulAttemptsToFinishCleanup/waitBeforeRerunSuccessfulAttemptSeconds`
+- `auth.idpSignInUrl/idpSignOutUrl/idpAudience/webAppUrl/awsAccessPortalUrl/sessionDurationInMinutes`
+- `notification.emailFrom`
 
-### End-to-End Tests
-- Full lease lifecycle (create -> use -> terminate)
-- Multi-account scenarios
-- Cleanup verification
-- Frontend UI tests (Cypress)
+**Nuke Config** (`nuke-config.yaml`):
+- AWS Nuke YAML with region list, settings, resource type exclusions, blocklist, and per-account filters
+- Placeholders `%CLEANUP_ACCOUNT_ID%`, `%HUB_ACCOUNT_ID%`, `%CLEANUP_ROLE_NAME%` are replaced at runtime
 
-### Load Tests
-- API concurrency testing (Locust)
-- DynamoDB throughput testing
-- Lambda cold start optimization
-- Target: 100 concurrent users
+**Reporting Config** (`reporting-config.yaml`):
+- Cost report group settings
+
+**Source**: `source/infrastructure/lib/components/config/`
 
 ---
 
-## Future Enhancements
+## Security Architecture
 
-1. **Self-Service Portal**
-   - Public signup flow integration
-   - Automated approval for qualified users
+### Authentication Flow
 
-2. **Advanced Scheduling**
-   - Recurring leases
-   - Lease templates with schedules
+ISB uses SAML 2.0 SSO with IAM Identity Center, not Cognito:
 
-3. **Resource Tagging Automation**
-   - Auto-tag all resources with lease metadata
-   - Cost allocation by tag
+1. User accesses CloudFront URL
+2. Frontend checks for JWT token
+3. If no token, redirects to IAM Identity Center sign-in URL (SAML 2.0)
+4. User authenticates with Identity Center
+5. SAML assertion sent to `/auth/saml/callback` endpoint
+6. SSO Handler Lambda validates SAML assertion against stored IDP certificate
+7. Lambda issues signed JWT token (signed with rotating Secrets Manager secret)
+8. JWT stored in browser, sent as `Authorization: Bearer` header
+9. Request Authorizer Lambda validates JWT signature and extracts roles
 
-4. **Compliance Scanning**
-   - Pre-termination security scans
-   - Vulnerability reports
+**Roles**: Admin, Manager, User (mapped from IDC group membership)
 
-5. **Machine Learning**
-   - Lease duration prediction
-   - Pool capacity forecasting
-   - Anomaly detection for unusual usage
+### WAF Protection
+
+The REST API is protected by AWS WAF v2 with:
+- IP allowlist (configurable CIDR ranges)
+- Rate limiting: 200 requests per 60 seconds per IP (via `X-Forwarded-For`)
+- AWS Managed Rules: Common Rule Set, Amazon IP Reputation List, Anonymous IP List
+
+### KMS Encryption
+
+A single customer-managed KMS key per namespace encrypts:
+- All three DynamoDB tables
+- EventBridge event bus
+- SQS queues (including DLQs)
+- S3 buckets (frontend assets, logging)
+- Secrets Manager secrets (JWT secret, IDP certificate)
+- CloudWatch Logs
 
 ---
 
-## References
+## Deployment
 
-- **Repository:** ndx-aws-isb (Phase 3)
-- **Related Docs:**
-  - [20-approver-system.md](20-approver-system.md)
-  - [23-deployer.md](23-deployer.md)
-  - [22-cost-tracking.md](22-cost-tracking.md)
-- **AWS Services:** Organizations, Identity Center, EventBridge, Step Functions, DynamoDB
-- **Contact:** ISB Core Team
+### From Source
+
+```bash
+# Initialize environment
+npm run env:init     # Creates .env file
+# Edit .env with required values
+
+# Bootstrap CDK
+npm run bootstrap
+
+# Deploy all stacks in order
+npm run deploy:all
+# OR individually:
+npm run deploy:account-pool
+npm run deploy:idc
+npm run deploy:data
+npm run deploy:compute
+```
+
+### Key Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `HUB_ACCOUNT_ID` | AWS account ID for the hub/compute stack |
+| `ORG_MGT_ACCOUNT_ID` | Organizations management account ID |
+| `IDC_ACCOUNT_ID` | IAM Identity Center account ID |
+| `NAMESPACE` | Stack prefix (e.g., `ndx`) |
+| `PARENT_OU_ID` | Parent OU or root ID for sandbox OU creation |
+| `AWS_REGIONS` | Comma-separated list of managed regions |
+| `IDENTITY_STORE_ID` | Identity Center store ID (d-xxxxxxxxxx) |
+| `SSO_INSTANCE_ARN` | SSO instance ARN |
+| `ADMIN/MANAGER/USER_GROUP_NAME` | IDC group names |
+| `DEPLOYMENT_MODE` | `dev` or `prod` (affects deletion protection) |
+
+**Source**: `package.json` (root)
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2024-01-01
-**Status:** Production System
+## Monorepo Structure
+
+```
+root/
+  package.json                    # Orchestration scripts, workspace config
+  source/
+    common/                       # Shared libraries (Zod schemas, events, SDK clients)
+      data/                       # DynamoDB entity schemas and stores
+      events/                     # EventBridge event type definitions
+      isb-services/               # Business logic services
+      lambda/                     # Middleware bundles, env schemas
+      sdk-clients/                # Typed AWS SDK client wrappers
+    frontend/                     # React SPA (see 12-isb-frontend.md)
+    infrastructure/               # CDK stacks and constructs
+      lib/
+        components/               # Reusable CDK constructs
+          account-cleaner/        # Step Function + CodeBuild
+          account-management/     # Lifecycle, monitoring, drift Lambdas
+          api/                    # REST API resource definitions
+          cloudfront/             # CloudFront + S3 hosting
+          config/                 # AppConfig setup and defaults
+          events/                 # EventBridge bus and rules
+          notification/           # Email notification Lambda
+          observability/          # Logging, metrics, dashboards
+          service-control-policies/  # SCP JSON definitions
+        helpers/                  # CDK utilities, role helpers, policy generators
+    lambdas/                      # Lambda handler code
+      api/                        # API handlers (leases, templates, accounts, auth)
+      account-cleanup/            # Initialize cleanup handler
+      account-management/         # Lifecycle, monitoring, drift handlers
+      custom-resources/           # CFN custom resource handlers
+      metrics/                    # Cost reporting, log archiving
+      notification/               # Email handler
+    layers/                       # Lambda layers (shared dependencies)
+  deployment/                     # CloudFormation distributable build scripts
+  scripts/                        # Repository maintenance scripts
+```
+
+---
+
+## Related Documentation
+
+- [11-lease-lifecycle.md](./11-lease-lifecycle.md) -- Lease state machine and transitions
+- [12-isb-frontend.md](./12-isb-frontend.md) -- React frontend architecture
+- [13-isb-customizations.md](./13-isb-customizations.md) -- CDDO customizations vs upstream
+- [20-approver-system.md](./20-approver-system.md) -- Approver satellite service
+- [21-billing-separator.md](./21-billing-separator.md) -- Billing separator satellite
+- [22-cost-tracking.md](./22-cost-tracking.md) -- Cost tracking satellite
+- [23-deployer.md](./23-deployer.md) -- Deployer satellite service
+- [05-service-control-policies.md](./05-service-control-policies.md) -- SCP analysis
+
+---
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

@@ -1,46 +1,97 @@
 # Cross-Account Trust Relationships
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Primary Account:** 568672915267 (InnovationSandboxHub)
-
----
+> **Last Updated**: 2026-03-02
+> **Source**: [innovation-sandbox-on-aws](https://github.com/co-cddo/innovation-sandbox-on-aws), [ndx-try-aws-lza](https://github.com/co-cddo/ndx-try-aws-lza), IAM role discovery
+> **Captured SHA**: `cf75b87` (ISB), `6d70ae3` (LZA)
 
 ## Executive Summary
 
-The NDX:Try AWS infrastructure uses GitHub OIDC for CI/CD deployments and cross-account IAM roles for operational access between accounts. This document catalogs all trust relationships discovered in the Hub account.
+The NDX:Try AWS platform uses three cross-account trust mechanisms: GitHub OIDC for CI/CD deployments from GitHub Actions, ISB intermediate roles for hub-to-pool-account operations, and LZA/Control Tower execution roles for infrastructure management. Five GitHub Actions OIDC roles are configured in the hub account, scoped to specific co-cddo repositories. ISB Lambda functions assume an intermediate role to perform operations in the 110 sandbox pool accounts.
 
 ---
 
-## GitHub OIDC Provider
+## Trust Architecture Overview
 
-### Provider Configuration
+```mermaid
+flowchart TB
+    subgraph github["GitHub Actions (co-cddo org)"]
+        gha_deployer["innovation-sandbox-on-aws-deployer"]
+        gha_approver["innovation-sandbox-on-aws-approver"]
+        gha_ndx["ndx"]
+    end
+
+    subgraph hub["Hub Account (568672915267)"]
+        oidc["GitHub OIDC Provider<br/>token.actions.githubusercontent.com"]
+
+        subgraph gha_roles["GitHub Actions IAM Roles"]
+            r_deployer["github-actions-*-deployer-deploy"]
+            r_approver["GitHubActions-Approver-InfraDeploy"]
+            r_ndx_content["GitHubActions-NDX-ContentDeploy"]
+            r_ndx_infra["GitHubActions-NDX-InfraDeploy"]
+            r_ndx_diff["GitHubActions-NDX-InfraDiff"]
+        end
+
+        subgraph isb_roles["ISB Operational Roles"]
+            intermediate["InnovationSandbox-ndx-IntermediateRole"]
+            deployer_role["isb-deployer-role-prod"]
+        end
+
+        subgraph isb_lambdas["ISB Lambda Functions"]
+            accounts_fn["Accounts Lambda"]
+            leases_fn["Leases Lambda"]
+            cleaner_fn["Account Cleaner"]
+            deployer_fn["Deployer Lambda"]
+        end
+
+        subgraph billing_roles["Billing Separator Roles"]
+            bs_scheduler["isb-billing-sep-scheduler-role-ndx"]
+            bs_quarantine["QuarantineLambdaServiceRole"]
+            bs_unquarantine["UnquarantineLambdaServiceRole"]
+        end
+    end
+
+    subgraph org_mgmt["Org Management (955063685555)"]
+        org_role["OrganizationAccountAccessRole"]
+        cost_role["Cost Explorer Cross-Account Role"]
+        acct_pool["AccountPool Stack Roles"]
+    end
+
+    subgraph pool["Pool Accounts (110 accounts)"]
+        pool_org_role["OrganizationAccountAccessRole"]
+        pool_isb_role["InnovationSandbox-ndx-SpokeRole"]
+        pool_ct_role["AWSControlTowerExecution"]
+    end
+
+    gha_deployer -->|AssumeRoleWithWebIdentity| oidc
+    gha_approver -->|AssumeRoleWithWebIdentity| oidc
+    gha_ndx -->|AssumeRoleWithWebIdentity| oidc
+    oidc --> r_deployer & r_approver & r_ndx_content & r_ndx_infra & r_ndx_diff
+
+    accounts_fn & leases_fn & cleaner_fn -->|AssumeRole| intermediate
+    deployer_fn -->|AssumeRole| deployer_role
+    intermediate -->|AssumeRole| pool_isb_role
+    deployer_role -->|AssumeRole| pool_org_role
+
+    leases_fn -->|AssumeRole| cost_role
+    accounts_fn -->|AssumeRole| org_role
+```
+
+---
+
+## 1. GitHub OIDC Provider
 
 | Property | Value |
-|----------|-------|
+|---|---|
 | Provider ARN | `arn:aws:iam::568672915267:oidc-provider/token.actions.githubusercontent.com` |
 | Provider URL | `https://token.actions.githubusercontent.com` |
 | Audience | `sts.amazonaws.com` |
+| Account | 568672915267 (Hub) |
 
-This OIDC provider enables GitHub Actions workflows to assume IAM roles without long-lived credentials.
+The OIDC provider enables GitHub Actions workflows to obtain temporary AWS credentials without storing long-lived secrets. All trust relationships use `sts:AssumeRoleWithWebIdentity` with repository-scoped conditions.
 
----
+### Trust Policy Pattern
 
-## GitHub Actions IAM Roles
-
-### Role Inventory
-
-| Role Name | Purpose | Repository |
-|-----------|---------|------------|
-| `github-actions-innovation-sandbox-on-aws-deployer-deploy` | Deploy ISB Deployer Lambda | co-cddo/innovation-sandbox-on-aws-deployer |
-| `GitHubActions-Approver-InfraDeploy` | Deploy Approver CDK infrastructure | co-cddo/innovation-sandbox-on-aws-approver |
-| `GitHubActions-NDX-ContentDeploy` | Deploy NDX website content to S3 | co-cddo/ndx |
-| `GitHubActions-NDX-InfraDeploy` | Deploy NDX website CDK infrastructure | co-cddo/ndx |
-| `GitHubActions-NDX-InfraDiff` | CDK diff for NDX PRs | co-cddo/ndx |
-
-### Trust Relationship Pattern
-
-All GitHub Actions roles use this trust policy pattern:
+All GitHub Actions roles use this trust policy structure:
 
 ```json
 {
@@ -67,209 +118,203 @@ All GitHub Actions roles use this trust policy pattern:
 
 ---
 
-## Repository to Role Mapping
+## 2. GitHub Actions IAM Roles
+
+| Role Name | Trusted Repository | Purpose |
+|---|---|---|
+| `github-actions-innovation-sandbox-on-aws-deployer-deploy` | `co-cddo/innovation-sandbox-on-aws-deployer` | Deploy ISB Deployer CDK stack |
+| `GitHubActions-Approver-InfraDeploy` | `co-cddo/innovation-sandbox-on-aws-approver` | Deploy Approver CDK infrastructure |
+| `GitHubActions-NDX-ContentDeploy` | `co-cddo/ndx` | Deploy NDX website content to S3 |
+| `GitHubActions-NDX-InfraDeploy` | `co-cddo/ndx` | Deploy NDX website CDK infrastructure |
+| `GitHubActions-NDX-InfraDiff` | `co-cddo/ndx` | CDK diff for NDX pull request reviews |
+
+### Repository-to-Role Mapping
 
 ```mermaid
 flowchart LR
-    subgraph github["GitHub (co-cddo)"]
-        deployer["innovation-sandbox-on-aws-deployer"]
-        approver["innovation-sandbox-on-aws-approver"]
-        ndx["ndx"]
+    subgraph repos["GitHub Repositories"]
+        deployer_repo["innovation-sandbox-<br/>on-aws-deployer"]
+        approver_repo["innovation-sandbox-<br/>on-aws-approver"]
+        ndx_repo["ndx"]
     end
 
-    subgraph aws["AWS (568672915267)"]
-        role1["github-actions-innovation-sandbox-on-aws-deployer-deploy"]
-        role2["GitHubActions-Approver-InfraDeploy"]
-        role3["GitHubActions-NDX-ContentDeploy"]
-        role4["GitHubActions-NDX-InfraDeploy"]
-        role5["GitHubActions-NDX-InfraDiff"]
+    subgraph roles["IAM Roles (568672915267)"]
+        r1["github-actions-*-deployer-deploy"]
+        r2["GitHubActions-Approver-InfraDeploy"]
+        r3["GitHubActions-NDX-ContentDeploy"]
+        r4["GitHubActions-NDX-InfraDeploy"]
+        r5["GitHubActions-NDX-InfraDiff"]
     end
 
-    deployer -->|OIDC| role1
-    approver -->|OIDC| role2
-    ndx -->|OIDC| role3
-    ndx -->|OIDC| role4
-    ndx -->|OIDC| role5
+    deployer_repo -->|OIDC| r1
+    approver_repo -->|OIDC| r2
+    ndx_repo -->|OIDC| r3
+    ndx_repo -->|OIDC| r4
+    ndx_repo -->|OIDC| r5
 ```
 
+### Repositories Without OIDC Roles in Hub
+
+The following repositories do not have visible GitHub Actions OIDC roles in the hub account. They may deploy to different accounts, use alternative authentication, or deploy manually:
+
+- `innovation-sandbox-on-aws-billing-seperator`
+- `innovation-sandbox-on-aws-costs`
+- `innovation-sandbox-on-aws-utils`
+- `ndx_try_aws_scenarios`
+- `ndx-try-aws-lza` (deployed via LZA pipeline in org management)
+- `ndx-try-aws-scp` (deployed via Terraform to org management)
+- `ndx-try-aws-terraform`
+
 ---
 
-## ISB Operational Roles
+## 3. ISB Operational Cross-Account Roles
 
-### Innovation Sandbox Intermediate Role
+### Hub-to-Pool Account Access
+
+The ISB core uses two role chains for cross-account operations:
+
+#### Intermediate Role (General Operations)
 
 | Property | Value |
-|----------|-------|
+|---|---|
 | Role Name | `InnovationSandbox-ndx-IntermediateRole` |
-| Purpose | Cross-account access from Hub to pool accounts |
-| Trust | ISB Lambda functions |
+| Location | Hub account (568672915267) |
+| Assumed By | ISB Lambda functions (Accounts, Leases, Monitoring, Cleaner) |
+| Purpose | Assume spoke roles in pool accounts |
 
-This role is assumed by ISB Lambda functions to perform operations in sandbox pool accounts.
+The intermediate role is a jump role -- ISB Lambdas first assume this role, then use it to assume the spoke role in the target pool account:
 
-### ISB Deployer Role
+```
+ISB Lambda -> IntermediateRole (hub) -> SpokeRole (pool account)
+```
+
+#### Deployer Role (CloudFormation Deployment)
 
 | Property | Value |
-|----------|-------|
+|---|---|
 | Role Name | `isb-deployer-role-prod` |
-| Purpose | Deploy CloudFormation to sandbox accounts |
-| Trust | ISB Deployer Lambda |
+| Location | Hub account (568672915267) |
+| Assumed By | ISB Deployer Lambda |
+| Purpose | Deploy CloudFormation stacks in pool accounts |
 
-Used by the deployer Lambda to:
-1. Assume role in target sandbox account
-2. Deploy CloudFormation stacks
-3. Create/update resources
+#### Pool Account Spoke Roles
 
----
+Each pool account contains roles that trust the hub account:
 
-## Billing Separator Roles
+| Role | Purpose | Trust |
+|---|---|---|
+| `InnovationSandbox-ndx-SpokeRole` | ISB operational access (OU moves, SCP application) | Hub intermediate role |
+| `OrganizationAccountAccessRole` | Full administrative access | Org management account |
+| `AWSControlTowerExecution` | Control Tower provisioning | Control Tower |
+| `stacksets-exec-*` | CloudFormation StackSets execution | Hub account |
 
-| Role Name | Purpose |
-|-----------|---------|
-| `isb-billing-sep-scheduler-role-ndx` | EventBridge Scheduler for billing cooldown |
-| `isb-billing-separator-hub-QuarantineLambdaServiceRo-*` | Quarantine Lambda execution |
-| `isb-billing-separator-hub-UnquarantineLambdaService-*` | Unquarantine Lambda execution |
-| `isb-billing-separator-hub-LogRetentionaae0aa3c5b4d4-*` | Log retention management |
+### Hub-to-Org Management Access
 
----
-
-## ISB Core Roles (from ndx-try-isb-compute stack)
-
-### API & Compute Roles
-
-| Role Pattern | Purpose |
-|--------------|---------|
-| `ndx-try-isb-compute-AccountsLambdaFunctionFunctionR-*` | Account management API |
-| `ndx-try-isb-compute-LeasesLambdaFunctionFunctionRol-*` | Lease CRUD operations |
-| `ndx-try-isb-compute-LeaseTemplatesLambdaFunctionFun-*` | Template management |
-| `ndx-try-isb-compute-AuthorizerLambdaFunctionFunctio-*` | API authorization |
-| `ndx-try-isb-compute-ConfigurationsLambdaFunctionFun-*` | AppConfig management |
-
-### Monitoring & Cleanup Roles
-
-| Role Pattern | Purpose |
-|--------------|---------|
-| `ndx-try-isb-compute-LeaseMonitoringFunctionRole46C5-*` | Budget/duration monitoring |
-| `ndx-try-isb-compute-AccountDriftMonitoringFunctionR-*` | Configuration drift detection |
-| `ndx-try-isb-compute-AccountCleanerCodeBuildCleanupP-*` | AWS Nuke CodeBuild project |
-| `ndx-try-isb-compute-AccountCleanerInitializeCleanup-*` | Cleanup initialization |
-| `ndx-try-isb-compute-AccountCleanerStepFunctionState-*` | Step Functions state machine |
-
-### Cost & Reporting Roles
-
-| Role Pattern | Purpose |
-|--------------|---------|
-| `ndx-try-isb-compute-CostReportingLambdaFunctionRole-*` | Individual lease costs |
-| `ndx-try-isb-compute-GroupCostReportingLambdaFunctio-*` | Department cost aggregation |
-| `ndx-try-isb-compute-LogArchivingFunctionRole93CCD43-*` | Log archival to S3 |
-
-### Security & Auth Roles
-
-| Role Pattern | Purpose |
-|--------------|---------|
-| `ndx-try-isb-compute-SsoHandlerFunctionRoleA9C67752-*` | IAM Identity Center operations |
-| `ndx-try-isb-compute-JwtSecretRotatorFunctionRole64A-*` | JWT key rotation |
-| `ndx-try-isb-compute-EmailNotificationFunctionRoleB4-*` | SES email sending |
-
-### Infrastructure Roles
-
-| Role Pattern | Purpose |
-|--------------|---------|
-| `ndx-try-isb-compute-SandboxAccountLifecycleManageme-*` | Account OU management |
-| `ndx-try-isb-compute-IsbSpokeConfigJsonParamResolver-*` | SSM parameter resolution |
-| `ndx-try-isb-compute-IsbRestApiCloudWatchRole3E2A3B9-*` | API Gateway CloudWatch logging |
-| `ndx-try-isb-compute-CustomCDKBucketDeployment8693BB-*` | CDK asset deployment |
+| Purpose | Mechanism |
+|---|---|
+| Cost Explorer queries | ISB Cost Reporting Lambda assumes role in org management (955063685555) |
+| Account registration | ISB Accounts Lambda calls Organizations API via org management role |
+| OU management | ISB Account lifecycle Lambda moves accounts between OUs |
 
 ---
 
-## Cross-Account Access Diagram
+## 4. Billing Separator Roles
+
+The billing separator service has its own role chain for quarantine operations:
+
+| Role | Purpose |
+|---|---|
+| `isb-billing-sep-scheduler-role-ndx` | EventBridge Scheduler for timed unquarantine |
+| `isb-billing-separator-hub-QuarantineLambdaServiceRole-*` | Lambda that moves accounts to Quarantine OU |
+| `isb-billing-separator-hub-UnquarantineLambdaServiceRole-*` | Lambda that moves accounts back to Available OU |
+| `isb-billing-separator-hub-LogRetentionaae0aa3c5b4d4-*` | CloudWatch log retention management |
+
+---
+
+## 5. LZA / Control Tower Execution Roles
+
+Landing Zone Accelerator and Control Tower use privileged execution roles across all accounts:
+
+| Role | Present In | Purpose |
+|---|---|---|
+| `AWSControlTowerExecution` | All accounts | Control Tower baseline provisioning |
+| `AWSAccelerator-*` | All accounts | LZA stack deployment and management |
+| `cdk-accel-*` | All accounts | CDK bootstrap for LZA |
+
+These roles are exempted from all SCPs to ensure infrastructure management continues to function.
+
+---
+
+## 6. SCP Exemption Pattern
+
+All ISB and infrastructure SCPs use a common exemption pattern for privileged roles:
+
+```json
+{
+  "Condition": {
+    "ArnNotLike": {
+      "aws:PrincipalARN": [
+        "arn:aws:iam::*:role/InnovationSandbox-ndx*",
+        "arn:aws:iam::*:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_ndx_IsbAdmins*",
+        "arn:aws:iam::*:role/stacksets-exec-*",
+        "arn:aws:iam::*:role/AWSControlTowerExecution"
+      ]
+    }
+  }
+}
+```
+
+This ensures that ISB control plane operations, ISB admin SSO sessions, StackSets execution, and Control Tower provisioning are never blocked by ISB-managed SCPs.
+
+---
+
+## Cross-Account Access Flow Summary
 
 ```mermaid
-flowchart TB
-    subgraph github["GitHub Actions"]
-        gha["Workflow"]
-    end
+sequenceDiagram
+    participant GHA as GitHub Actions
+    participant Hub as Hub (568672915267)
+    participant OrgMgmt as Org Mgmt (955063685555)
+    participant Pool as Pool Account
 
-    subgraph hub["Hub Account (568672915267)"]
-        oidc["OIDC Provider"]
-        gha_roles["GitHub Actions Roles"]
-        isb_lambdas["ISB Lambda Functions"]
-        intermediate["Intermediate Role"]
-        deployer_role["Deployer Role"]
-    end
+    Note over GHA,Hub: CI/CD Deployment
+    GHA->>Hub: AssumeRoleWithWebIdentity (OIDC)
+    Hub->>Hub: Deploy CDK/CFN stacks
 
-    subgraph org["Org Management (955063685555)"]
-        org_role["Cost Explorer Role"]
-    end
+    Note over Hub,Pool: Lease Lifecycle
+    Hub->>Hub: ISB Lambda assumes IntermediateRole
+    Hub->>Pool: AssumeRole (SpokeRole)
+    Pool-->>Hub: Temporary credentials
 
-    subgraph pool["Pool Accounts"]
-        pool_role["OrganizationAccountAccessRole"]
-    end
-
-    gha -->|AssumeRoleWithWebIdentity| oidc
-    oidc --> gha_roles
-    gha_roles -->|Deploy| hub
-
-    isb_lambdas -->|AssumeRole| intermediate
-    isb_lambdas -->|AssumeRole| deployer_role
-    intermediate -->|AssumeRole| pool_role
-    deployer_role -->|AssumeRole| pool_role
-
-    isb_lambdas -->|AssumeRole| org_role
+    Note over Hub,OrgMgmt: Cost & Account Ops
+    Hub->>OrgMgmt: AssumeRole (Cost Explorer role)
+    OrgMgmt-->>Hub: Cost data
+    Hub->>OrgMgmt: Organizations API (OU moves)
 ```
 
 ---
 
-## Trust Relationship Security
+## Security Observations
 
-### GitHub OIDC Best Practices
+1. **Repository Scoping**: All OIDC roles are scoped to specific `co-cddo/*` repositories using `StringLike` conditions, preventing cross-repository impersonation.
 
-1. **Repository Scoping**: Roles are scoped to specific repositories using `repo:co-cddo/<repo>:*`
-2. **Audience Validation**: All roles verify `aud: sts.amazonaws.com`
-3. **No Long-Lived Credentials**: GitHub Actions use short-lived tokens
+2. **Audience Validation**: All OIDC roles validate `aud: sts.amazonaws.com`.
 
-### Cross-Account Access Patterns
+3. **No Long-Lived Credentials**: GitHub Actions use short-lived OIDC tokens; ISB uses STS temporary credentials.
 
-1. **Hub → Pool**: Uses intermediate roles with STS AssumeRole
-2. **Hub → Org Management**: Cost Explorer queries use org management role
-3. **Pool → Hub**: EventBridge events route back via cross-account rules
+4. **Role Naming Inconsistency**: Mix of `github-actions-*` (lowercase) and `GitHubActions-*` (PascalCase) naming patterns. Consider standardising.
 
----
-
-## Permission Boundaries
-
-The following permission boundaries may be in place (requires further investigation):
-
-| Boundary | Applied To | Purpose |
-|----------|-----------|---------|
-| ISB User Boundary | Pool account users | Prevent ISB infrastructure modification |
-| Sandbox Boundary | Lease holders | Enforce SCP-like restrictions at role level |
-
----
-
-## Issues Discovered
-
-1. **Missing Repos in OIDC**: The following repos don't have visible GitHub Actions roles:
-   - innovation-sandbox-on-aws-billing-seperator
-   - innovation-sandbox-on-aws-costs
-   - innovation-sandbox-on-aws-utils
-   - ndx_try_aws_scenarios
-   - ndx-try-aws-lza
-   - ndx-try-aws-scp
-   - ndx-try-aws-terraform
-
-   These may deploy to different accounts or use alternative authentication methods.
-
-2. **Role Naming Inconsistency**: Mix of naming patterns:
-   - `github-actions-*` (lowercase, hyphens)
-   - `GitHubActions-*` (PascalCase, hyphens)
-
-3. **CDK Random Suffixes**: Many roles have CDK-generated random suffixes making them hard to identify without checking the trust policy.
+5. **CDK Random Suffixes**: Many ISB core roles have CDK-generated random suffixes, making audit harder. The role purpose must be inferred from the prefix pattern.
 
 ---
 
 ## Related Documents
 
-- [02-aws-organization.md](./02-aws-organization.md) - Organization structure
-- [03-hub-account-resources.md](./03-hub-account-resources.md) - Hub account resources
-- [51-oidc-configuration.md](./51-oidc-configuration.md) - Detailed OIDC configuration
-- [52-deployment-flows.md](./52-deployment-flows.md) - CI/CD deployment flows
+- [02-aws-organization.md](./02-aws-organization.md) -- Organization structure and account inventory
+- [03-hub-account-resources.md](./03-hub-account-resources.md) -- Hub account resources
+- [05-service-control-policies.md](./05-service-control-policies.md) -- SCP exemption patterns
+- [00-repo-inventory.md](./00-repo-inventory.md) -- Repository inventory
+
+---
+
+*Generated from IAM role analysis and CDK source inspection on 2026-03-02. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

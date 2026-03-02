@@ -1,38 +1,39 @@
 # AWS Organization Structure
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Organization ID:** o-4g8nrlnr9s
-
----
+> **Last Updated**: 2026-03-02
+> **Source**: [AWS Organizations API](https://console.aws.amazon.com/organizations/) via `.state/discovered-accounts.json`, `.state/org-ous.json`, `.state/org-roots.json`
+> **Captured SHA**: N/A (live AWS state)
 
 ## Executive Summary
 
-The NDX:Try AWS infrastructure is deployed within a single AWS Organization managed by the Central Digital & Data Office (CDDO). The organization uses AWS Landing Zone Accelerator (LZA) with AWS Control Tower for governance, implementing a multi-account strategy with dedicated accounts for security, infrastructure, workloads, and Innovation Sandbox pool management.
+The NDX:Try AWS infrastructure operates within a single AWS Organization (`o-4g8nrlnr9s`) managed by CDDO under the Department for Science, Innovation and Technology (DSIT). The organization contains 117 accounts (7 infrastructure + 110 sandbox pool), governed by AWS Control Tower and Landing Zone Accelerator v1.1.0. The OU hierarchy implements a standard landing zone pattern with a dedicated Innovation Sandbox OU containing a 7-stage account lifecycle pool.
 
 ---
 
 ## Organization Overview
 
 | Property | Value |
-|----------|-------|
+|---|---|
 | Organization ID | `o-4g8nrlnr9s` |
-| Feature Set | ALL (all features enabled) |
+| Feature Set | ALL |
 | Root ID | `r-2laj` |
-| Management Account ID | `955063685555` |
-| Management Account Email | `ndx-try-provider+gds-ndx-try-aws@dsit.gov.uk` |
+| Management Account | `955063685555` (gds-ndx-try-aws-org-management) |
+| Management Email | `ndx-try-provider+gds-ndx-try-aws@dsit.gov.uk` |
+| Total Accounts | **117** |
+| Infrastructure Accounts | 7 |
+| Pool Accounts | 110 |
 
 ### Enabled Policy Types
 
 | Policy Type | Status |
-|-------------|--------|
-| SERVICE_CONTROL_POLICY | ✅ Enabled |
-| RESOURCE_CONTROL_POLICY | ✅ Enabled |
-| TAG_POLICY | ✅ Enabled |
-| BACKUP_POLICY | ✅ Enabled |
-| AISERVICES_OPT_OUT_POLICY | ✅ Enabled |
-| DECLARATIVE_POLICY_EC2 | ✅ Enabled |
-| S3_POLICY | ✅ Enabled |
+|---|---|
+| SERVICE_CONTROL_POLICY | Enabled |
+| RESOURCE_CONTROL_POLICY | Enabled |
+| TAG_POLICY | Enabled |
+| BACKUP_POLICY | Enabled |
+| AISERVICES_OPT_OUT_POLICY | Enabled |
+| DECLARATIVE_POLICY_EC2 | Enabled |
+| S3_POLICY | Enabled |
 
 ---
 
@@ -40,223 +41,201 @@ The NDX:Try AWS infrastructure is deployed within a single AWS Organization mana
 
 ```mermaid
 flowchart TB
-    subgraph root["Root (r-2laj)"]
-        direction TB
-        mgmt["🏛️ gds-ndx-try-aws-org-management<br/>955063685555"]
+    root["Root<br/><b>r-2laj</b>"]
 
-        subgraph security["Security OU"]
-            audit["🔒 Audit<br/>406429476767"]
-            logarchive["📁 LogArchive<br/>408585017257"]
-        end
+    root --> mgmt["gds-ndx-try-aws-org-management<br/>955063685555"]
+    root --> security_ou
+    root --> infra_ou
+    root --> workloads_ou
+    root --> isb_ou
+    root --> suspended_ou
 
-        subgraph infra["Infrastructure OU"]
-            network["🌐 Network<br/>365117797655"]
-            perimeter["🛡️ Perimeter<br/>297552146292"]
-            shared["🔧 SharedServices<br/>803319930943"]
-        end
-
-        subgraph workloads["Workloads OU"]
-            subgraph prod["Prod OU"]
-                hub["⭐ InnovationSandboxHub<br/>568672915267"]
-            end
-            dev["Dev OU (empty)"]
-            test["Test OU (empty)"]
-            sandbox["Sandbox OU (empty)"]
-        end
-
-        subgraph isb["InnovationSandbox OU"]
-            subgraph pool["ndx_InnovationSandboxAccountPool OU"]
-                entry["Entry OU (empty)"]
-                available["🟢 Available OU"]
-                active["🔵 Active OU (empty)"]
-                cleanup["🔴 CleanUp OU (empty)"]
-                frozen["❄️ Frozen OU (empty)"]
-                quarantine["⚠️ Quarantine OU"]
-                exit["Exit OU (empty)"]
-            end
-        end
-
-        suspended["Suspended OU (empty)"]
+    subgraph security_ou["Security OU<br/>ou-2laj-8q61vv13"]
+        audit["Audit<br/>406429476767"]
+        logarchive["LogArchive<br/>408585017257"]
     end
 
-    available --> pool001["pool-003<br/>340601547583"]
-    available --> pool002["pool-004<br/>982203978489"]
-    available --> pool003["pool-005<br/>680464296760"]
-    available --> pool004["pool-006<br/>404584456509"]
-    available --> pool005["pool-009<br/>848960887562"]
+    subgraph infra_ou["Infrastructure OU<br/>ou-2laj-40z2mrlg"]
+        network["Network<br/>365117797655"]
+        perimeter["Perimeter<br/>297552146292"]
+        shared["SharedServices<br/>803319930943"]
+    end
 
-    quarantine --> q1["pool-001<br/>449788867583"]
-    quarantine --> q2["pool-002<br/>831494785845"]
-    quarantine --> q3["pool-007<br/>417845783913"]
-    quarantine --> q4["pool-008<br/>221792773038"]
+    subgraph workloads_ou["Workloads OU<br/>ou-2laj-4t1kuxou"]
+        prod_ou
+        dev_ou["Dev OU<br/><i>empty</i>"]
+        test_ou["Test OU<br/><i>empty</i>"]
+        sandbox_ou["Sandbox OU<br/><i>empty</i>"]
+    end
+
+    subgraph prod_ou["Prod OU<br/>ou-2laj-bje756n2"]
+        hub["InnovationSandboxHub<br/>568672915267"]
+    end
+
+    subgraph isb_ou["InnovationSandbox OU<br/>ou-2laj-lha5vsam"]
+        pool_ou
+    end
+
+    subgraph pool_ou["ndx_InnovationSandboxAccountPool<br/>ou-2laj-4dyae1oa"]
+        entry["Entry OU"]
+        available["Available OU<br/><i>110 pool accounts</i>"]
+        active["Active OU"]
+        cleanup["CleanUp OU"]
+        frozen["Frozen OU"]
+        quarantine["Quarantine OU"]
+        exit_ou["Exit OU"]
+    end
+
+    suspended_ou["Suspended OU<br/><i>empty</i>"]
 ```
 
 ---
 
-## Account Inventory
+## Infrastructure Accounts
 
-### Summary by OU
-
-| OU | Account Count | Purpose |
-|----|---------------|---------|
-| Root (no OU) | 1 | Organization Management |
-| Security | 2 | Audit & Log Archive |
-| Infrastructure | 3 | Network, Perimeter, Shared Services |
-| Workloads/Prod | 1 | Innovation Sandbox Hub |
-| InnovationSandbox/Available | 5 | Pool accounts ready for leases |
-| InnovationSandbox/Quarantine | 4 | Pool accounts in cooldown/quarantine |
-| **Total** | **16** | |
-
-### Complete Account List
-
-| Account Name | Account ID | Email | OU | Status |
-|--------------|------------|-------|----|----|
-| gds-ndx-try-aws-org-management | 955063685555 | ndx-try-provider+gds-ndx-try-aws@dsit.gov.uk | Root | Management Account |
-| Audit | 406429476767 | ndx-try-provider+gds-ndx-try-aws-audit@dsit.gov.uk | Security | Security audit & compliance |
-| LogArchive | 408585017257 | ndx-try-provider+gds-ndx-try-aws-log-archive@dsit.gov.uk | Security | Centralized logging |
-| Network | 365117797655 | ndx-try-provider+gds-ndx-try-aws-network@dsit.gov.uk | Infrastructure | Network services |
-| Perimeter | 297552146292 | ndx-try-provider+gds-ndx-try-aws-perimeter@dsit.gov.uk | Infrastructure | Edge/perimeter security |
-| SharedServices | 803319930943 | ndx-try-provider+gds-ndx-try-aws-shared-services@dsit.gov.uk | Infrastructure | Shared tooling |
+| Account Name | Account ID | Email | OU | Purpose |
+|---|---|---|---|---|
+| gds-ndx-try-aws-org-management | 955063685555 | ndx-try-provider+gds-ndx-try-aws@dsit.gov.uk | Root | Organization root, Control Tower, LZA pipeline |
+| Audit | 406429476767 | ndx-try-provider+gds-ndx-try-aws-audit@dsit.gov.uk | Security | Security Hub, Config aggregation |
+| LogArchive | 408585017257 | ndx-try-provider+gds-ndx-try-aws-log-archive@dsit.gov.uk | Security | Centralized CloudWatch/S3 log storage |
+| Network | 365117797655 | ndx-try-provider+gds-ndx-try-aws-network@dsit.gov.uk | Infrastructure | Transit Gateway, Route 53, VPC routing |
+| Perimeter | 297552146292 | ndx-try-provider+gds-ndx-try-aws-perimeter@dsit.gov.uk | Infrastructure | WAF, Shield, edge security |
+| SharedServices | 803319930943 | ndx-try-provider+gds-ndx-try-aws-shared-services@dsit.gov.uk | Infrastructure | ECR, shared tooling |
 | InnovationSandboxHub | 568672915267 | ndx-try-provider+gds-ndx-try-aws-isb-hub@dsit.gov.uk | Workloads/Prod | ISB control plane |
-| pool-001 | 449788867583 | ndx-try-provider+gds-ndx-try-aws-pool-001@dsit.gov.uk | ISB/Quarantine | Sandbox pool account |
-| pool-002 | 831494785845 | ndx-try-provider+gds-ndx-try-aws-pool-002@dsit.gov.uk | ISB/Quarantine | Sandbox pool account |
-| pool-003 | 340601547583 | ndx-try-provider+gds-ndx-try-aws-pool-003@dsit.gov.uk | ISB/Available | Sandbox pool account |
-| pool-004 | 982203978489 | ndx-try-provider+gds-ndx-try-aws-pool-004@dsit.gov.uk | ISB/Available | Sandbox pool account |
-| pool-005 | 680464296760 | ndx-try-provider+gds-ndx-try-aws-pool-005@dsit.gov.uk | ISB/Available | Sandbox pool account |
-| pool-006 | 404584456509 | ndx-try-provider+gds-ndx-try-aws-pool-006@dsit.gov.uk | ISB/Available | Sandbox pool account |
-| pool-007 | 417845783913 | ndx-try-provider+gds-ndx-try-aws-pool-007@dsit.gov.uk | ISB/Quarantine | Sandbox pool account |
-| pool-008 | 221792773038 | ndx-try-provider+gds-ndx-try-aws-pool-008@dsit.gov.uk | ISB/Quarantine | Sandbox pool account |
-| pool-009 | 848960887562 | ndx-try-provider+gds-ndx-try-aws-pool-009@dsit.gov.uk | ISB/Available | Sandbox pool account |
-
-### Email Naming Convention
-
-All accounts follow the pattern:
-```
-ndx-try-provider+gds-ndx-try-aws-<purpose>@dsit.gov.uk
-```
-
-This uses email sub-addressing (`+` notation) for account separation while maintaining a single domain.
 
 ---
 
-## OU Structure Detail
+## Pool Accounts (110 Total)
 
-### Root Level OUs
+The sandbox pool contains 110 accounts numbered from pool-001 to pool-121 (with gaps where numbers were skipped). All accounts follow the email pattern `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk`.
 
-| OU Name | OU ID | Purpose |
-|---------|-------|---------|
-| Security | ou-2laj-8q61vv13 | Security & compliance services |
-| Infrastructure | ou-2laj-40z2mrlg | Core infrastructure services |
-| Workloads | ou-2laj-4t1kuxou | Application workloads |
-| InnovationSandbox | ou-2laj-lha5vsam | ISB account management |
-| Suspended | ou-2laj-vn184pt1 | Suspended/archived accounts |
+### Pool Account Distribution by Number Range
 
-### Workloads Sub-OUs
+| Range | Count | Sample Account IDs |
+|---|---|---|
+| pool-001 to pool-030 | 27 | 449788867583, 831494785845, 340601547583, ... |
+| pool-031 to pool-060 | 22 | 612812183319, 609665072531, 995631985080, ... |
+| pool-061 to pool-090 | 28 | 352246554840, 594862215936, 003789736367, ... |
+| pool-091 to pool-121 | 33 | 922231562337, 916340099025, 888449443958, ... |
 
-| OU Name | OU ID | Purpose |
-|---------|-------|---------|
-| Prod | ou-2laj-bje756n2 | Production workloads |
-| Dev | ou-2laj-gjg1p2n2 | Development (empty) |
-| Test | ou-2laj-tkyylaag | Testing (empty) |
-| Sandbox | ou-2laj-zei1pn6x | General sandbox (empty) |
+### Account Lifecycle State Machine
 
-### Innovation Sandbox Account Pool OUs
-
-The Innovation Sandbox uses a nested OU structure for account lifecycle management:
-
-| OU Name | OU ID | Purpose | Current Accounts |
-|---------|-------|---------|------------------|
-| ndx_InnovationSandboxAccountPool | ou-2laj-4dyae1oa | Parent OU for pool accounts | 0 |
-| Entry | ou-2laj-2by9v0sr | New accounts awaiting initialization | 0 |
-| Available | ou-2laj-oihxgbtr | Accounts ready for lease assignment | 5 |
-| Active | ou-2laj-sre4rnjs | Accounts with active leases | 0 |
-| CleanUp | ou-2laj-x3o8lbk8 | Accounts being cleaned (AWS Nuke) | 0 |
-| Frozen | ou-2laj-jpffue7g | Accounts frozen (budget/duration breach) | 0 |
-| Quarantine | ou-2laj-mmagoake | Failed cleanup or billing cooldown | 4 |
-| Exit | ou-2laj-s1t02mrz | Accounts pending removal | 0 |
-
-### Account Lifecycle State Diagram
+Pool accounts move through a 7-stage lifecycle managed by ISB via OU placement:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Entry: New Account Created
+    [*] --> Entry: Account Created
     Entry --> Available: Initialization Complete
     Available --> Active: Lease Approved
-    Active --> Frozen: Budget/Duration Breach
+    Active --> Frozen: Budget or Duration Breach
     Active --> CleanUp: Lease Terminated
-    Frozen --> CleanUp: Admin Unfreezes
-    CleanUp --> Available: Cleanup Successful
-    CleanUp --> Quarantine: Cleanup Failed (3x)
+    Frozen --> CleanUp: Admin Unfreezes or Timeout
+    CleanUp --> Available: Cleanup Successful (2 passes)
+    CleanUp --> Quarantine: Cleanup Failed (3 attempts)
     Quarantine --> Available: Manual Remediation
     Quarantine --> Exit: Unrepairable
     Exit --> [*]: Account Closed
 ```
 
+| OU | OU ID | Purpose | SCP Behaviour |
+|---|---|---|---|
+| **Entry** | ou-2laj-2by9v0sr | New accounts awaiting LZA initialization | LZA quarantine SCP blocks all non-LZA actions |
+| **Available** | ou-2laj-oihxgbtr | Accounts ready for lease assignment | Write-protected (read-only) |
+| **Active** | ou-2laj-sre4rnjs | Accounts with active leases | Cost avoidance SCPs applied |
+| **CleanUp** | ou-2laj-x3o8lbk8 | Accounts being cleaned by aws-nuke | ISB control plane access only |
+| **Frozen** | ou-2laj-jpffue7g | Budget/duration breach -- frozen | Baseline SCPs only |
+| **Quarantine** | ou-2laj-mmagoake | Failed cleanup or billing cooldown | Write-protected (read-only) |
+| **Exit** | ou-2laj-s1t02mrz | Accounts pending removal | Locked down |
+
 ---
 
-## Account Purpose Details
+## OU Hierarchy Detail
 
-### Management Account (955063685555)
-- **Role**: Organization root account
-- **Services**: AWS Organizations, AWS Control Tower, LZA Pipeline
-- **Access**: Highly restricted, break-glass only
+### Root-Level OUs
 
-### Security Accounts
+| OU Name | OU ID | Child OUs | Direct Accounts |
+|---|---|---|---|
+| Security | ou-2laj-8q61vv13 | None | 2 (Audit, LogArchive) |
+| Infrastructure | ou-2laj-40z2mrlg | None | 3 (Network, Perimeter, SharedServices) |
+| Workloads | ou-2laj-4t1kuxou | Prod, Dev, Test, Sandbox | 0 |
+| InnovationSandbox | ou-2laj-lha5vsam | ndx_InnovationSandboxAccountPool | 0 |
+| Suspended | ou-2laj-vn184pt1 | None | 0 |
 
-#### Audit (406429476767)
-- **Role**: Security Hub aggregation, Config aggregation
-- **Services**: AWS Security Hub, AWS Config
-- **Access**: Security team read-only
+### Workloads Sub-OUs
 
-#### LogArchive (408585017257)
-- **Role**: Centralized log storage
-- **Services**: CloudWatch Logs, S3 log buckets
-- **Access**: Log retention compliance
+| OU Name | OU ID | Accounts |
+|---|---|---|
+| Prod | ou-2laj-bje756n2 | 1 (InnovationSandboxHub) |
+| Dev | ou-2laj-gjg1p2n2 | 0 (empty) |
+| Test | ou-2laj-tkyylaag | 0 (empty) |
+| Sandbox | ou-2laj-zei1pn6x | 0 (empty) |
 
-### Infrastructure Accounts
+### Innovation Sandbox Pool Sub-OUs
 
-#### Network (365117797655)
-- **Role**: Transit Gateway, VPC routing
-- **Services**: Transit Gateway, Route 53
-- **Access**: Network operations
+| OU Name | OU ID | Accounts |
+|---|---|---|
+| ndx_InnovationSandboxAccountPool | ou-2laj-4dyae1oa | 0 (parent only) |
+| Entry | ou-2laj-2by9v0sr | 0 |
+| Available | ou-2laj-oihxgbtr | 110 |
+| Active | ou-2laj-sre4rnjs | 0 |
+| CleanUp | ou-2laj-x3o8lbk8 | 0 |
+| Frozen | ou-2laj-jpffue7g | 0 |
+| Quarantine | ou-2laj-mmagoake | 0 |
+| Exit | ou-2laj-s1t02mrz | 0 |
 
-#### Perimeter (297552146292)
-- **Role**: Edge security, WAF
-- **Services**: AWS WAF, Shield
-- **Access**: Security perimeter management
+**Note on current state**: At the time of discovery (2026-03-02), all 110 pool accounts are in the Available OU with no active leases. This may indicate a maintenance window or low-usage period.
 
-#### SharedServices (803319930943)
-- **Role**: Shared tooling and services
-- **Services**: ECR, shared Lambda layers
-- **Access**: Platform team
+---
 
-### Innovation Sandbox Hub (568672915267)
-- **Role**: ISB control plane
-- **Services**: Lambda, DynamoDB, API Gateway, Step Functions
-- **Access**: ISB operators
-- **Key Resources**: See [03-hub-account-resources.md](./03-hub-account-resources.md)
+## Email Naming Convention
 
-### Pool Accounts (pool-001 through pool-009)
-- **Role**: Temporary sandbox environments
-- **Services**: User workloads (within SCP limits)
-- **Access**: Lease holders only
-- **Lifecycle**: Managed by ISB automation
+All accounts use email sub-addressing under a single DSIT domain:
+
+```
+ndx-try-provider+gds-ndx-try-aws-<purpose>@dsit.gov.uk
+```
+
+| Purpose Suffix | Account |
+|---|---|
+| (none) | Org management |
+| audit | Audit |
+| log-archive | LogArchive |
+| network | Network |
+| perimeter | Perimeter |
+| shared-services | SharedServices |
+| isb-hub | InnovationSandboxHub |
+| pool-NNN | Pool accounts (001-121) |
+
+---
+
+## Governance Stack
+
+The organization is managed by three complementary governance systems:
+
+```mermaid
+flowchart LR
+    CT["AWS Control Tower<br/><i>4 guardrail SCPs</i>"]
+    LZA["Landing Zone Accelerator v1.1.0<br/><i>8 guardrail SCPs + infra</i>"]
+    TF["Terraform (ndx-try-aws-scp)<br/><i>4 cost defence SCPs</i>"]
+    ISB["ISB Core<br/><i>2 lifecycle SCPs</i>"]
+
+    CT --> root["Root"]
+    LZA --> root
+    TF --> pool["Pool OUs"]
+    ISB --> pool
+```
+
+See [05-service-control-policies.md](./05-service-control-policies.md) for complete SCP analysis.
 
 ---
 
 ## Related Documents
 
-- [03-hub-account-resources.md](./03-hub-account-resources.md) - Hub account resource inventory
-- [04-cross-account-trust.md](./04-cross-account-trust.md) - IAM trust relationships
-- [05-service-control-policies.md](./05-service-control-policies.md) - SCP inventory and mappings
-- [40-lza-configuration.md](./40-lza-configuration.md) - LZA YAML configuration analysis
+- [03-hub-account-resources.md](./03-hub-account-resources.md) -- Hub account resource inventory
+- [04-cross-account-trust.md](./04-cross-account-trust.md) -- IAM trust relationships
+- [05-service-control-policies.md](./05-service-control-policies.md) -- SCP inventory and mappings
+- [00-repo-inventory.md](./00-repo-inventory.md) -- Repository inventory
 
 ---
 
-## Issues Discovered
-
-1. **4 pool accounts in Quarantine**: pool-001, pool-002, pool-007, pool-008 are all in the Quarantine OU, suggesting either cleanup failures or the 72-hour billing cooldown is in effect.
-
-2. **No accounts in Active OU**: At time of discovery, no leases were active.
-
-3. **Empty environment OUs**: Dev, Test, and Sandbox OUs under Workloads are empty, suggesting all workloads are in Prod.
+*Generated from AWS Organizations state captured 2026-03-02. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

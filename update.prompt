@@ -228,14 +228,18 @@ gh repo list co-cddo --limit 500 --json name,description,updatedAt,pushedAt,isAr
   | jq '[.[] | select(
       ((.name | test("ndx|sandbox|isb"; "i")) or
        (.description // "" | test("ndx|sandbox|innovation"; "i"))) and
-      (.name != "ndx-try-arch")
+      (.name != "ndx-try-arch") and
+      (.name != "aws-sandbox") and
+      (.name != "gc3-misp-sandbox-ec2")
     )]' > .state/discovered-repos.json
 
 # Also check for related repos
 gh repo list co-cddo --limit 500 --json name,description \
   | jq '[.[] | select(
       (.name | test("try.*aws|aws.*try"; "i")) and
-      (.name != "ndx-try-arch")
+      (.name != "ndx-try-arch") and
+      (.name != "aws-sandbox") and
+      (.name != "gc3-misp-sandbox-ec2")
     )]' >> .state/discovered-repos.json
 ```
 

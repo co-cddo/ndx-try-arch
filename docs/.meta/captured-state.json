@@ -1,52 +1,122 @@
 {
   "$schema": "captured-state.schema.json",
-  "capturedAt": null,
+  "capturedAt": "2026-03-02T23:44:24.045423+00:00",
   "promptVersion": "2.0",
-
   "sources": {
     "repositories": {
-      "_comment": "Populated by discovery phase. Each entry tracks what was documented.",
-      "_example": {
+      "innovation-sandbox-on-aws": {
         "url": "https://github.com/co-cddo/innovation-sandbox-on-aws",
-        "capturedSha": null,
-        "capturedBranch": "main",
-        "capturedAt": null,
-        "upstream": {
-          "url": "https://github.com/aws-solutions/innovation-sandbox-on-aws",
-          "capturedSha": null,
-          "divergence": { "ahead": 0, "behind": 0 }
-        },
-        "documentsAffected": [],
-        "keyFiles": {}
+        "capturedSha": "cf75b87e1764611d794343640136cf3fb047a801",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "innovation-sandbox-on-aws-approver": {
+        "url": "https://github.com/co-cddo/innovation-sandbox-on-aws-approver",
+        "capturedSha": "be062e7ded92dc89475c1254d11d37cb29cbb8e8",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "innovation-sandbox-on-aws-billing-seperator": {
+        "url": "https://github.com/co-cddo/innovation-sandbox-on-aws-billing-seperator",
+        "capturedSha": "f8f1bdc89f30446b414812056f4a481fd242990c",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "innovation-sandbox-on-aws-client": {
+        "url": "https://github.com/co-cddo/innovation-sandbox-on-aws-client",
+        "capturedSha": "7250ce79a6e8dc64d344f6557e1b80dd9bdab3b1",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "innovation-sandbox-on-aws-costs": {
+        "url": "https://github.com/co-cddo/innovation-sandbox-on-aws-costs",
+        "capturedSha": "cf659bb2409c44e4d1e583a15c9d5fda7f08e192",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "innovation-sandbox-on-aws-deployer": {
+        "url": "https://github.com/co-cddo/innovation-sandbox-on-aws-deployer",
+        "capturedSha": "c2a85a060d2a8b6de90926670439d0b7d1c6e4ca",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "innovation-sandbox-on-aws-utils": {
+        "url": "https://github.com/co-cddo/innovation-sandbox-on-aws-utils",
+        "capturedSha": "aa7e7813165d74899d360baa7e8af9bc622f2a12",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "ndx": {
+        "url": "https://github.com/co-cddo/ndx",
+        "capturedSha": "a5bf3681c38031fab27ef9d34cc50de4a72e5098",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "ndx-try-aws-isb": {
+        "url": "https://github.com/co-cddo/ndx-try-aws-isb",
+        "capturedSha": "70bb7ec329e455b9e4d70176f7ae72279190f97a",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "ndx-try-aws-lza": {
+        "url": "https://github.com/co-cddo/ndx-try-aws-lza",
+        "capturedSha": "6d70ae3e53029cbb411e821de7eb875116da0f1d",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "ndx-try-aws-scp": {
+        "url": "https://github.com/co-cddo/ndx-try-aws-scp",
+        "capturedSha": "912db2e4cd49998034b60766176f79fc04b8ce49",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "ndx-try-aws-terraform": {
+        "url": "https://github.com/co-cddo/ndx-try-aws-terraform",
+        "capturedSha": "3a1ed1bd34c3bd79f3e419816fd3abddc223fec3",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
+      },
+      "ndx_try_aws_scenarios": {
+        "url": "https://github.com/co-cddo/ndx_try_aws_scenarios",
+        "capturedSha": "fcb5c08ed749ba2d79b531420b263cce22db2d4e",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00"
       }
     },
-
     "aws": {
       "organization": {
-        "id": null,
-        "capturedAt": null,
-        "accountCount": null,
-        "ouCount": null
+        "id": "o-4g8nrlnr9s",
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+        "accountCount": 117,
+        "ouCount": 10
       },
       "accounts": {
-        "_comment": "Populated by AWS discovery. Maps account ID to captured state.",
-        "_example": {
-          "name": null,
-          "capturedAt": null,
-          "profile": null,
-          "resources": {
-            "lambdas": null,
-            "dynamodbTables": null,
-            "eventbridgeRules": null,
-            "s3Buckets": null
-          },
-          "documentsAffected": []
+        "297552146292": {
+          "name": "Perimeter",
+          "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+          "status": "ACTIVE"
+        },
+        "408585017257": {
+          "name": "LogArchive",
+          "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+          "status": "ACTIVE"
+        },
+        "365117797655": {
+          "name": "Network",
+          "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+          "status": "ACTIVE"
+        },
+        "406429476767": {
+          "name": "Audit",
+          "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+          "status": "ACTIVE"
+        },
+        "568672915267": {
+          "name": "InnovationSandboxHub",
+          "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+          "status": "ACTIVE"
+        },
+        "803319930943": {
+          "name": "SharedServices",
+          "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+          "status": "ACTIVE"
+        },
+        "955063685555": {
+          "name": "gds-ndx-try-aws-org-management",
+          "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+          "status": "ACTIVE"
         }
       },
       "scps": {
-        "capturedAt": null,
-        "count": null,
-        "checksumAll": null
+        "capturedAt": "2026-03-02T23:44:24.045423+00:00",
+        "count": 19
       }
     }
   }

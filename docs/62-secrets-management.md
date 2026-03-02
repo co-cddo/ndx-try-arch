@@ -1,21 +1,11 @@
 # Secrets Management
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Hub Account:** 568672915267 (InnovationSandboxHub)
-
----
+> **Last Updated**: 2026-03-02
+> **Sources**: `innovation-sandbox-on-aws` (auth-api.ts, secret-rotator-handler.ts, sso-handler/config.ts), `innovation-sandbox-on-aws-costs`, `innovation-sandbox-on-aws-billing-seperator`, `innovation-sandbox-on-aws-deployer`, `ndx`, `ndx-try-aws-scp`, GitHub Actions workflow files
 
 ## Executive Summary
 
-The NDX:Try AWS infrastructure uses a combination of AWS Secrets Manager, SSM Parameter Store, and GitHub Secrets for managing sensitive configuration data. This document catalogs all secrets, their storage locations, access patterns, rotation strategies, and naming conventions.
-
-**Key Findings:**
-- **Secrets Manager:** 4 secrets (JWT, IdP cert, API keys)
-- **SSM Parameter Store:** 10+ parameters (configuration sharing)
-- **GitHub Secrets:** 15+ secrets across 6 repositories
-- **Rotation:** Automated for JWT (30 days), manual for certificates
-- **Encryption:** Customer-managed KMS keys for all sensitive data
+The NDX:Try AWS platform manages secrets across three tiers: AWS Secrets Manager for runtime application secrets (JWT signing key, IdP certificate, API keys), SSM Parameter Store for non-sensitive configuration sharing between CDK stacks, and GitHub repository secrets for CI/CD deployment parameters. Only the JWT signing secret has automated rotation (30-day cycle via a dedicated Lambda function); all other secrets require manual rotation. All Secrets Manager secrets are encrypted with customer-managed KMS keys.
 
 ---
 
@@ -23,51 +13,60 @@ The NDX:Try AWS infrastructure uses a combination of AWS Secrets Manager, SSM Pa
 
 ```mermaid
 flowchart TB
-    subgraph "GitHub"
-        gh_secrets[GitHub Secrets<br/>Org & Repo Level]
+    subgraph "GitHub Repositories"
+        gh_secrets[GitHub Secrets<br/>Repository-Scoped]
+        gh_vars[GitHub Variables<br/>Non-Sensitive Config]
     end
 
     subgraph "Hub Account: 568672915267"
-        secrets_mgr[AWS Secrets Manager<br/>4 Secrets]
-        ssm[SSM Parameter Store<br/>10+ Parameters]
-        kms[Customer-Managed<br/>KMS Key]
-    end
+        subgraph "Secrets Manager"
+            jwt_secret["/isb/.../Auth/JwtSecret"<br/>32-char, 30-day auto-rotation]
+            idp_cert["/isb/.../Auth/IdpCert"<br/>X.509 cert, manual rotation]
+        end
 
-    subgraph "Lambda Functions"
-        jwt_rotator[JWT Secret Rotator]
-        lambda_apis[API Lambdas]
-        deployer[ISB Deployer]
+        subgraph "SSM Parameter Store"
+            ssm_data["/isb/.../data/config"<br/>DynamoDB table names, AppConfig IDs]
+            ssm_idc["/isb/.../idc/config"<br/>Identity Center config]
+            ssm_other["Other parameters<br/>(GitHub Actions role ARNs, etc.)"]
+        end
+
+        subgraph "KMS"
+            kms_key[Customer-Managed Key<br/>Annual rotation]
+        end
+
+        subgraph "Lambda Functions"
+            rotator[JWT Secret Rotator<br/>Reserved concurrency: 1]
+            sso_handler[SSO Handler<br/>Reads JWT + IdP Cert]
+            authorizer[Lambda Authorizer<br/>Reads JWT Secret]
+        end
     end
 
     subgraph "External Services"
-        github_api[GitHub API]
+        idc[IAM Identity Center]
         notify[GOV.UK Notify]
-        identity_center[IAM Identity Center]
+        github_api[GitHub API]
     end
 
-    kms --> secrets_mgr
-    kms --> ssm
+    kms_key --> jwt_secret
+    kms_key --> idp_cert
 
-    secrets_mgr -->|JWT Secret| lambda_apis
-    secrets_mgr -->|IdP Cert| lambda_apis
-    secrets_mgr -->|Notify API Key| lambda_apis
-    secrets_mgr -->|GitHub Token| deployer
+    rotator -->|30-day rotation| jwt_secret
+    sso_handler -->|GetSecretValue| jwt_secret
+    sso_handler -->|GetSecretValue| idp_cert
+    authorizer -->|GetSecretValue| jwt_secret
 
-    ssm -->|Configuration| lambda_apis
-    ssm -->|Stack Outputs| deployer
+    sso_handler -->|GetParameter| ssm_idc
+    authorizer -->|AppConfig| ssm_data
 
-    jwt_rotator -->|Rotate| secrets_mgr
+    gh_secrets -->|OIDC Role ARN| sso_handler
+    gh_secrets -->|Deploy config| rotator
 
-    gh_secrets -->|OIDC Roles| lambda_apis
-    gh_secrets -->|Deploy Secrets| deployer
+    sso_handler -->|Auth| idc
 
-    lambda_apis -->|Authenticate| identity_center
-    lambda_apis -->|Send Email| notify
-    deployer -->|Clone Repos| github_api
-
-    style secrets_mgr fill:#ffe1e1
+    style jwt_secret fill:#ffe1e1
+    style idp_cert fill:#ffe1e1
+    style kms_key fill:#fff9c4
     style gh_secrets fill:#e1f5fe
-    style kms fill:#fff9c4
 ```
 
 ---
@@ -76,28 +75,20 @@ flowchart TB
 
 ### Secrets Inventory
 
-| Secret Name | Purpose | Rotation | Created By | Encryption |
-|------------|---------|----------|-----------|------------|
-| `/isb/ndx-try-isb/Auth/JwtSecret` | JWT token signing key | 30 days (auto) | CDK | Customer KMS |
-| `/isb/ndx-try-isb/Auth/IdpCert` | SAML IdP X.509 certificate | Manual | CDK | Customer KMS |
-| `github-token-scenarios` | GitHub API token for scenarios repo | Manual | Manual | Customer KMS |
-| `notify-api-key-prod` | GOV.UK Notify API key | Manual | Manual | Customer KMS |
+| Secret Name | Purpose | Encryption | Rotation | Accessed By |
+|------------|---------|------------|----------|-------------|
+| `/isb/<ns>/Auth/JwtSecret` | JWT signing key for API auth | Customer KMS | 30 days (auto) | Lambda Authorizer, SSO Handler |
+| `/isb/<ns>/Auth/IdpCert` | SAML IdP X.509 certificate | Customer KMS | Manual | SSO Handler |
 
-### Secret Details
+### JWT Secret
 
-#### JWT Secret
+**Full Path**: `/isb/<namespace>/Auth/JwtSecret`
 
-**Full Name:** `/isb/ndx-try-isb/Auth/JwtSecret`
-
-**Purpose:** Signing and verifying JWT tokens for ISB API authentication
-
-**Format:** 32-character alphanumeric string
-
-**CDK Configuration:**
+**CDK Definition** (`auth-api.ts`):
 ```typescript
-const jwtTokenSecret = new Secret(scope, 'JwtSecret', {
+const jwtTokenSecret = new Secret(scope, "JwtSecret", {
   secretName: `${SECRET_NAME_PREFIX}/${props.namespace}/Auth/JwtSecret`,
-  description: 'The secret for JWT used by Innovation Sandbox',
+  description: "The secret for JWT used by Innovation Sandbox",
   encryptionKey: kmsKey,
   generateSecretString: {
     passwordLength: 32,
@@ -105,538 +96,296 @@ const jwtTokenSecret = new Secret(scope, 'JwtSecret', {
 });
 ```
 
-**Rotation Configuration:**
+**Rotation Schedule**:
 ```typescript
-jwtTokenSecret.addRotationSchedule('RotationSchedule', {
+jwtTokenSecret.addRotationSchedule("RotationSchedule", {
   rotationLambda: jwtSecretRotatorLambda.lambdaFunction,
   automaticallyAfter: Duration.days(30),
   rotateImmediatelyOnUpdate: true,
 });
 ```
 
-**Rotation Lambda:** `JwtSecretRotatorFunction`
+**Rotation Lambda**: `JwtSecretRotator` with `reservedConcurrentExecutions: 1` to prevent concurrent rotation.
 
-**Rotation Process:**
-1. Generate new 32-character secret
-2. Store as AWSPENDING version
-3. Test JWT generation and validation
-4. Promote to AWSCURRENT
-5. Deprecate AWSPREVIOUS
+**Rotation Process** (from `secret-rotator-handler.ts`):
 
-**Access Pattern:**
+| Step | Action | Implementation |
+|------|--------|----------------|
+| `createSecret` | Generate new 32-char random password via `GetRandomPasswordCommand`, store as `AWSPENDING` | Active |
+| `setSecret` | No-op (no external system to update) | NOOP |
+| `testSecret` | No-op (JWT validation tested on first use) | NOOP |
+| `finishSecret` | Promote `AWSPENDING` to `AWSCURRENT` via `UpdateSecretVersionStageCommand` | Active |
+
+**Access Pattern**:
 ```typescript
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-
-const client = new SecretsManagerClient({ region: 'us-west-2' });
-const response = await client.send(new GetSecretValueCommand({
-  SecretId: '/isb/ndx-try-isb/Auth/JwtSecret',
-}));
-const secret = response.SecretString;
+const secretsManagerHelper = IsbClients.secretsManager(env);
+const jwtSecret = await secretsManagerHelper.getStringSecret(env.JWT_SECRET_NAME);
 ```
 
-**Accessed By:**
-- Lambda Authorizer (JWT validation)
-- SSO Handler Lambda (JWT generation)
+The authorizer Lambda caches the JWT secret in a module-level variable (`let jwtSecret = ""`) initialized lazily on first invocation, reducing Secrets Manager API calls across warm Lambda invocations.
 
----
+**Source**: `authorizer/src/authorization.ts` lines 18, 129-133
 
-#### IdP Certificate
+### IdP Certificate
 
-**Full Name:** `/isb/ndx-try-isb/Auth/IdpCert`
+**Full Path**: `/isb/<namespace>/Auth/IdpCert`
 
-**Purpose:** SAML IdP X.509 certificate for validating SAML assertions
-
-**Format:** PEM-encoded X.509 certificate
-
-**CDK Configuration:**
+**CDK Definition** (`auth-api.ts`):
 ```typescript
-const idpCertSecret = new Secret(scope, 'IdpCert', {
+const idpCertSecret = new Secret(scope, "IdpCert", {
   secretName: `${SECRET_NAME_PREFIX}/${props.namespace}/Auth/IdpCert`,
-  description: 'IAM Identity Center Certificate of the ISB SAML 2.0 custom app',
+  description: "IAM Identity Center Certificate of the ISB SAML 2.0 custom app",
   encryptionKey: kmsKey,
   secretStringValue: SecretValue.unsafePlainText(
-    'Please paste the IAM Identity Center Certificate of the ' +
-    'Innovation Sandbox SAML 2.0 custom application here'
+    "Please paste the IAM Identity Center Certificate of the" +
+      " Innovation Sandbox SAML 2.0 custom application here"
   ),
 });
 ```
 
-**Rotation:** Manual (when IdP certificate rotates)
+**Format**: PEM-encoded X.509 certificate
 
-**Manual Update Process:**
-1. Download new IdP metadata from IAM Identity Center
-2. Extract X.509 certificate from metadata
-3. Update Secrets Manager secret via AWS Console or CLI
+**Rotation**: Manual. When the IAM Identity Center SAML application certificate rotates (typically annually), an administrator must:
+
+1. Download the new IdP metadata from IAM Identity Center
+2. Extract the X.509 certificate
+3. Update the secret via AWS Console or CLI:
+   ```bash
+   aws secretsmanager update-secret \
+     --secret-id /isb/<namespace>/Auth/IdpCert \
+     --secret-string "$(cat new-certificate.pem)"
+   ```
 4. Test SAML authentication
 
-**AWS CLI Update:**
-```bash
-aws secretsmanager update-secret \
-  --secret-id /isb/ndx-try-isb/Auth/IdpCert \
-  --secret-string "$(cat new-certificate.pem)" \
-  --profile NDX/InnovationSandboxHub
-```
-
-**Accessed By:**
-- SSO Handler Lambda (SAML signature validation)
-
----
-
-#### GitHub Token (Scenarios)
-
-**Full Name:** `github-token-scenarios` (or similar)
-
-**Purpose:** GitHub API token for cloning scenario repositories in deployer Lambda
-
-**Format:** GitHub Personal Access Token (classic or fine-grained)
-
-**Permissions Required:**
-- `repo` scope (read repository contents)
-- Access to `co-cddo/ndx_try_aws_scenarios` repository
-
-**Rotation:** Manual (GitHub recommends 90 days)
-
-**Accessed By:**
-- ISB Deployer Lambda (sparse clone of scenarios)
-
----
-
-#### GOV.UK Notify API Key
-
-**Full Name:** `notify-api-key-prod`
-
-**Purpose:** GOV.UK Notify API key for sending lease approval/termination emails
-
-**Format:** `notify-api-key-xxxxx...`
-
-**Rotation:** Manual (service-dependent)
-
-**Accessed By:**
-- Email Notification Lambda
-
----
-
-### Secrets Manager Access Patterns
-
-**Lambda Function IAM Policy:**
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "secretsmanager:GetSecretValue",
-        "secretsmanager:DescribeSecret"
-      ],
-      "Resource": [
-        "arn:aws:secretsmanager:us-west-2:568672915267:secret:/isb/ndx-try-isb/Auth/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "kms:Decrypt",
-        "kms:DescribeKey"
-      ],
-      "Resource": "arn:aws:kms:us-west-2:568672915267:key/<key-id>"
-    }
-  ]
-}
-```
-
-**CDK Helper Function:**
+**Access Pattern**: The SSO handler fetches both secrets in a single batch call:
 ```typescript
-// Grants Lambda access to specific secret
-secret.grantRead(lambdaFunction);
+const allSecrets = await secretsManagerHelper.getStringSecrets(
+  env.JWT_SECRET_NAME,
+  env.IDP_CERT_SECRET_NAME,
+);
 ```
+
+**Source**: `sso-handler/src/config.ts` lines 37-39
+
+### IAM Access Policy
+
+Lambda functions that need secret access receive a targeted policy:
+
+```typescript
+const secretAccessPolicy = new aws_iam.PolicyStatement({
+  actions: ["secretsmanager:GetSecretValue"],
+  effect: aws_iam.Effect.ALLOW,
+  resources: [jwtTokenSecret.secretArn, idpCertSecret.secretArn],
+});
+ssoLambda.lambdaFunction.addToRolePolicy(secretAccessPolicy);
+kmsKey.grantEncryptDecrypt(ssoLambda.lambdaFunction);
+```
+
+Both `secretsmanager:GetSecretValue` and `kms:Encrypt/Decrypt` are required because the secrets are encrypted with a customer-managed KMS key.
+
+**Source**: `auth-api.ts` lines 103-107, 166-168
 
 ---
 
 ## 2. SSM Parameter Store
 
-### Parameter Types
-
-**String Parameters:**
-- Configuration values
-- Stack outputs
-- Non-sensitive settings
-
-**StringList Parameters:**
-- Not used in current architecture
-
-**SecureString Parameters:**
-- Sensitive configuration (KMS-encrypted)
-- Less common (prefer Secrets Manager)
-
 ### Parameter Inventory
 
 | Parameter Name | Type | Purpose | Created By |
 |---------------|------|---------|-----------|
-| `/isb/ndx-try-isb/data/config` | String | Data stack configuration JSON | CDK |
-| `/isb/ndx-try-isb/idc/config` | String | Identity Center configuration JSON | CDK |
-| `/isb/ndx-try-isb/accountpool/config` | String | Account pool configuration JSON | CDK |
-| `/isb/ndx-try-isb/compute/api-url` | String | API Gateway URL | CDK |
-| `/isb/ndx-try-isb/compute/cloudfront-url` | String | CloudFront distribution URL | CDK |
-| `/github-actions/approver/role-arn` | String | Approver deployment role | Manual |
-| `/github-actions/deployer/ecr-repo` | String | Deployer ECR repository | CDK |
-| `/cdk/bootstrap/version` | String | CDK bootstrap version | CDK Bootstrap |
-
-### Parameter Naming Convention
-
-**Pattern:** `/{namespace}/{stack}/{parameter-name}`
-
-**Examples:**
-- `/isb/ndx-try-isb/data/config`
-- `/isb/prod/compute/api-url`
-- `/github-actions/approver/role-arn`
+| `/isb/<ns>/data/config` | String (JSON) | DynamoDB table names, AppConfig IDs, KMS key ID, solution version | CDK (IsbDataResources) |
+| `/isb/<ns>/idc/config` | String (JSON) | Identity Center instance configuration | CDK |
 
 ### Data Configuration Parameter
 
-**Parameter Name:** `/isb/ndx-try-isb/data/config`
+**Parameter Name**: Set by `sharedDataSsmParamName(namespace)`
 
-**CDK Configuration (`isb-data-resources.ts`):**
-```typescript
-new aws_ssm.StringParameter(scope, 'DataConfiguration', {
-  parameterName: sharedDataSsmParamName(props.namespace),
-  description: 'The configuration of the data stack of Innovation Sandbox',
-  stringValue: JSON.stringify({
-    configApplicationId: this.config.application.applicationId,
-    configEnvironmentId: this.config.environment.environmentId,
-    globalConfigConfigurationProfileId: this.config.globalConfigHostedConfiguration.configurationProfileId,
-    nukeConfigConfigurationProfileId: this.config.nukeConfigHostedConfiguration.configurationProfileId,
-    reportingConfigConfigurationProfileId: this.config.reportingConfigHostedConfiguration.configurationProfileId,
-    accountTable: this.sandboxAccountTable.tableName,
-    leaseTemplateTable: this.leaseTemplateTable.tableName,
-    leaseTable: this.leaseTable.tableName,
-    tableKmsKeyId: this.tableKmsKey.keyId,
-    solutionVersion: getContextFromMapping(scope, 'version'),
-    supportedSchemas: JSON.stringify(supportedSchemas),
-  } satisfies DataConfig),
-  simpleName: true,
-});
-```
-
-**Purpose:** Share DynamoDB table names and AppConfig IDs across Lambda functions
-
-**Access Pattern:**
-```typescript
-import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-
-const ssmClient = new SSMClient({ region: 'us-west-2' });
-const response = await ssmClient.send(new GetParameterCommand({
-  Name: '/isb/ndx-try-isb/data/config',
-}));
-const config = JSON.parse(response.Parameter.Value);
-const tableName = config.accountTable;
-```
-
----
-
-### SSM Parameter Access Patterns
-
-**Lambda Function IAM Policy:**
+**Contents** (JSON):
 ```json
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ssm:GetParameter",
-        "ssm:GetParameters"
-      ],
-      "Resource": [
-        "arn:aws:ssm:us-west-2:568672915267:parameter/isb/ndx-try-isb/*"
-      ]
-    }
-  ]
+  "configApplicationId": "...",
+  "configEnvironmentId": "...",
+  "globalConfigConfigurationProfileId": "...",
+  "nukeConfigConfigurationProfileId": "...",
+  "reportingConfigConfigurationProfileId": "...",
+  "accountTable": "SandboxAccountTable-...",
+  "leaseTemplateTable": "LeaseTemplateTable-...",
+  "leaseTable": "LeaseTable-...",
+  "tableKmsKeyId": "key-id",
+  "solutionVersion": "...",
+  "supportedSchemas": "[\"1\"]"
 }
 ```
 
-**CDK Helper Function:**
+**Purpose**: Cross-stack configuration sharing. Lambda functions read this parameter at startup to discover DynamoDB table names and AppConfig profile IDs without hardcoding them.
+
+**Source**: `isb-data-resources.ts` lines 86-106
+
+### Access Pattern
+
+Lambda functions are granted SSM read access via a shared helper:
 ```typescript
-// Grant Lambda access to parameters with prefix
-grantIsbSsmParameterRead(lambdaFunction, namespace);
+grantIsbSsmParameterRead(
+  ssoLambda.lambdaFunction.role as Role,
+  sharedIdcSsmParamName(props.namespace),
+  props.idcAccountId,
+);
 ```
 
 ---
 
 ## 3. GitHub Secrets
 
-### Organization-Level Secrets
-
-**Not used in current architecture** (all secrets are repository-scoped)
-
 ### Repository-Level Secrets
 
-#### innovation-sandbox-on-aws-approver
-
-| Secret Name | Purpose |
-|------------|---------|
-| (No secrets - uses OIDC only) | N/A |
-
-**Note:** Role ARN is hardcoded in workflow file
-
----
+GitHub repository secrets are used to pass deployment-time configuration to GitHub Actions workflows. These are encrypted at rest by GitHub and masked in workflow logs.
 
 #### innovation-sandbox-on-aws-billing-seperator
 
-| Secret Name | Purpose |
-|------------|---------|
-| `AWS_ROLE_ARN` | IAM role for CDK deployment |
-
-**Usage in Workflow:**
-```yaml
-- name: Configure AWS credentials via OIDC
-  uses: aws-actions/configure-aws-credentials@v5
-  with:
-    role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-    aws-region: ${{ vars.AWS_REGION || 'eu-west-2' }}
-```
-
----
+| Secret | Purpose |
+|--------|---------|
+| `AWS_ROLE_ARN` | IAM role ARN for OIDC-based CDK deployment |
 
 #### innovation-sandbox-on-aws-costs
 
-| Secret Name | Purpose |
-|------------|---------|
-| `AWS_ROLE_ARN` | IAM role for CDK deployment |
-| `COST_EXPLORER_ROLE_ARN` | Cross-account Cost Explorer access role |
-| `ISB_LEASES_LAMBDA_ARN` | ISB Leases Lambda ARN for JWT validation |
-
-**Usage in Workflow:**
-```yaml
-- name: CDK Deploy
-  run: |
-    npx cdk deploy --require-approval never \
-      --context eventBusName=${{ vars.EVENT_BUS_NAME }} \
-      --context costExplorerRoleArn=${{ secrets.COST_EXPLORER_ROLE_ARN }} \
-      --context isbLeasesLambdaArn=${{ secrets.ISB_LEASES_LAMBDA_ARN }} \
-      --context alertEmail=${{ vars.ALERT_EMAIL }}
-```
-
----
+| Secret | Purpose |
+|--------|---------|
+| `AWS_ROLE_ARN` | IAM role ARN for OIDC-based CDK deployment |
+| `COST_EXPLORER_ROLE_ARN` | Cross-account role for Cost Explorer queries |
+| `ISB_LEASES_LAMBDA_ARN` | ISB Leases Lambda ARN (passed as CDK context) |
 
 #### innovation-sandbox-on-aws-deployer
 
-| Secret Name | Purpose |
-|------------|---------|
-| `AWS_DEPLOY_ROLE_ARN` | IAM role for ECR/Lambda deployment |
-
----
+| Secret | Purpose |
+|--------|---------|
+| `AWS_DEPLOY_ROLE_ARN` | IAM role ARN for ECR/Lambda deployment |
 
 #### ndx
 
-| Secret Name | Purpose |
-|------------|---------|
+| Secret | Purpose |
+|--------|---------|
 | `ISB_NDX_USERS_GROUP_ID` | Identity Center group ID for signup Lambda |
-
-**Usage in Workflow:**
-```yaml
-- name: Deploy Cross-Account Role
-  run: |
-    aws cloudformation deploy \
-      --template-file infra-signup/isb-cross-account-role.yaml \
-      --stack-name ndx-signup-cross-account-role \
-      --capabilities CAPABILITY_NAMED_IAM \
-      --parameter-overrides GroupId=${{ secrets.ISB_NDX_USERS_GROUP_ID }}
-```
-
----
 
 #### ndx-try-aws-scp
 
-| Secret Name | Purpose |
-|------------|---------|
-| `AWS_ROLE_ARN` | IAM role for Terraform deployment |
-| `SLACK_BUDGET_ALERT_EMAIL` | Email for budget alerts (sent to Slack webhook) |
+| Secret | Purpose |
+|--------|---------|
+| `AWS_ROLE_ARN` | IAM role ARN for Terraform deployment |
+| `SLACK_BUDGET_ALERT_EMAIL` | Email for Slack-routed budget alerts |
 
-**Usage in Workflow:**
-```yaml
-env:
-  TF_VAR_budget_alert_emails: ${{ secrets.SLACK_BUDGET_ALERT_EMAIL }}
+### GitHub Variables (Non-Secret)
+
+Some workflows also use GitHub Variables (non-sensitive, visible in settings):
+
+| Variable | Example | Used By |
+|----------|---------|---------|
+| `AWS_REGION` | `us-east-1` | billing-seperator, costs |
+| `EVENT_BUS_NAME` | `ISBEventBus` | costs |
+| `ALERT_EMAIL` | team email | costs |
+
+---
+
+## 4. Lambda Environment Variables
+
+Non-sensitive configuration is passed to Lambda functions via environment variables at deployment time:
+
+| Variable | Example Value | Purpose |
+|----------|---------------|---------|
+| `JWT_SECRET_NAME` | `/isb/ndx-try-isb/Auth/JwtSecret` | Secret name reference (not the secret itself) |
+| `IDP_CERT_SECRET_NAME` | `/isb/ndx-try-isb/Auth/IdpCert` | Secret name reference |
+| `INTERMEDIATE_ROLE_ARN` | `arn:aws:iam::...:role/InnovationSandbox-ndx-IntermediateRole` | Cross-account hop |
+| `IDC_ROLE_ARN` | `arn:aws:iam::<idc-account>:role/...` | Identity Center access |
+| `ISB_NAMESPACE` | `ndx-try-isb` | Namespace for parameter resolution |
+| `APP_CONFIG_APPLICATION_ID` | Application ID | AppConfig lookup |
+| `APP_CONFIG_ENVIRONMENT_ID` | Environment ID | AppConfig lookup |
+| `APP_CONFIG_PROFILE_ID` | Profile ID | AppConfig lookup |
+| `POWERTOOLS_SERVICE_NAME` | `SsoHandler` | Structured logging |
+| `USER_AGENT_EXTRA` | Custom user agent | SDK call attribution |
+
+These are never used for sensitive values. Actual secrets are always resolved at runtime from Secrets Manager.
+
+**Source**: `auth-api.ts` lines 143-154, `rest-api-all.ts` lines 83-89
+
+---
+
+## 5. Secret Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant SM as Secrets Manager
+    participant KMS as KMS Key
+    participant Rotator as JWT Rotator Lambda
+    participant SSO as SSO Handler Lambda
+    participant Auth as Authorizer Lambda
+    participant AppConfig as AppConfig
+    participant SSM as SSM Parameter Store
+
+    Note over Rotator,SM: Every 30 days
+    Rotator->>SM: GetRandomPasswordCommand (32 chars)
+    Rotator->>SM: PutSecretValue (AWSPENDING)
+    Rotator->>SM: FinishSecret (promote AWSCURRENT)
+    SM->>KMS: Encrypt new secret value
+
+    Note over SSO: On SAML callback
+    SSO->>SM: GetSecretValue (JwtSecret)
+    SM->>KMS: Decrypt
+    SM->>SSO: Return JWT secret
+    SSO->>SM: GetSecretValue (IdpCert)
+    SM->>KMS: Decrypt
+    SM->>SSO: Return certificate
+    SSO->>SSO: Validate SAML + sign JWT
+
+    Note over Auth: On every API request (cached)
+    Auth->>AppConfig: Get global config
+    AppConfig->>Auth: Config (maintenance mode, etc.)
+    Auth->>SM: GetSecretValue (JwtSecret)<br/>(cached in Lambda memory)
+    SM->>KMS: Decrypt (first call only)
+    SM->>Auth: Return secret
+    Auth->>Auth: verifyJwt(secret, token)
+
+    Note over SSO: On startup
+    SSO->>SSM: GetParameter (IDC config)
+    SSM->>SSO: Return IDC instance ARN, store ID
 ```
 
 ---
 
-### GitHub Secrets Management
+## 6. Secrets Rotation Summary
 
-**Creating a Secret:**
-1. Navigate to repository → Settings → Secrets and variables → Actions
-2. Click "New repository secret"
-3. Enter name (UPPERCASE_WITH_UNDERSCORES)
-4. Enter value (never logged)
-5. Click "Add secret"
-
-**Updating a Secret:**
-1. Navigate to secret in repository settings
-2. Click "Update secret"
-3. Enter new value
-4. Click "Update secret"
-
-**Secret Rotation Best Practices:**
-- Rotate AWS IAM role ARNs when role is recreated
-- Rotate API keys every 90 days
-- Rotate GitHub tokens every 90 days
-- Update Identity Center group IDs when groups change
+| Secret | Method | Frequency | Lambda | Automated |
+|--------|--------|-----------|--------|-----------|
+| JWT Secret | Secrets Manager rotation | 30 days | JwtSecretRotator | Yes |
+| IdP Certificate | Manual update | ~1 year (cert expiry) | N/A | No |
+| GitHub Secrets (Role ARNs) | Manual update | When IAM roles recreated | N/A | No |
+| GitHub Secrets (API Keys) | Manual update | Recommended 90 days | N/A | No |
 
 ---
 
-## 4. Environment Variables vs Secrets
+## 7. Naming Conventions
 
-### When to Use Secrets Manager
+### Secrets Manager
 
-**Use Secrets Manager for:**
-- API keys (JWT secret, Notify API key, GitHub tokens)
-- Certificates (IdP X.509 certificate)
-- Database passwords (if applicable)
-- Anything that requires automatic rotation
+**Pattern**: `/{prefix}/{namespace}/{category}/{name}`
 
-**Benefits:**
-- Automatic rotation with Lambda
-- Versioning (AWSCURRENT, AWSPENDING, AWSPREVIOUS)
-- KMS encryption at rest
-- Fine-grained IAM access control
-- CloudTrail audit logging
-
----
-
-### When to Use SSM Parameter Store
-
-**Use SSM Parameter Store for:**
-- Configuration values (table names, URLs)
-- Stack outputs (CloudFormation outputs)
-- Non-sensitive settings (feature flags)
-- Cross-stack references
-
-**Benefits:**
-- Free for standard parameters
-- Version history
-- Hierarchical naming
-- Integration with CDK (cross-stack references)
-
----
-
-### When to Use GitHub Secrets
-
-**Use GitHub Secrets for:**
-- OIDC role ARNs
-- CDK context values (per-environment)
-- Deployment-time configuration
-- External service identifiers
-
-**Benefits:**
-- Scoped to repository or organization
-- Encrypted at rest by GitHub
-- Masked in workflow logs
-- Supports environments for approval gates
-
----
-
-### When to Use Environment Variables
-
-**Use Lambda Environment Variables for:**
-- Non-sensitive configuration (namespace, region)
-- Runtime flags (DEBUG mode)
-- Static configuration (timeouts, limits)
-
-**Benefits:**
-- Fast access (no API call)
-- Visible in Lambda console
-- Easy to update via CDK
-
-**Avoid for:**
-- Secrets (use Secrets Manager)
-- Cross-stack references (use SSM)
-
----
-
-## 5. Secrets Naming Conventions
-
-### Secrets Manager Naming
-
-**Pattern:** `/{namespace}/{category}/{secret-name}`
-
-**Examples:**
+**Examples**:
 - `/isb/ndx-try-isb/Auth/JwtSecret`
-- `/isb/prod/Auth/IdpCert`
-- `/myapp/prod/database/password`
+- `/isb/ndx-try-isb/Auth/IdpCert`
 
-**Benefits:**
-- Hierarchical organization
-- Easy to grant access by prefix
-- Clear ownership and purpose
+The prefix is defined by `SECRET_NAME_PREFIX` from `isb-types.js`.
 
----
+### SSM Parameter Store
 
-### SSM Parameter Naming
+**Pattern**: `/{namespace}/{stack}/{parameter-name}`
 
-**Pattern:** `/{namespace}/{stack}/{parameter-name}`
-
-**Examples:**
+**Examples**:
 - `/isb/ndx-try-isb/data/config`
-- `/github-actions/approver/role-arn`
-- `/cdk/bootstrap/version`
+- `/isb/ndx-try-isb/idc/config`
 
-**Benefits:**
-- Consistent with CDK conventions
-- Easy to query by path
-- Clear stack ownership
+### GitHub Secrets
 
----
+**Pattern**: `UPPERCASE_WITH_UNDERSCORES`
 
-### GitHub Secrets Naming
-
-**Pattern:** `UPPERCASE_WITH_UNDERSCORES`
-
-**Examples:**
-- `AWS_ROLE_ARN`
-- `COST_EXPLORER_ROLE_ARN`
-- `ISB_NDX_USERS_GROUP_ID`
-
-**Benefits:**
-- Standard GitHub convention
-- Easy to identify in workflow files
-- Distinct from environment variables
-
----
-
-## 6. Secrets Access Audit
-
-### CloudTrail Events
-
-**Secrets Manager:**
-- `GetSecretValue` - Secret retrieval
-- `UpdateSecret` - Secret update
-- `RotateSecret` - Manual rotation trigger
-- `PutSecretValue` - Lambda rotation
-
-**SSM Parameter Store:**
-- `GetParameter` - Parameter retrieval
-- `PutParameter` - Parameter update
-- `DeleteParameter` - Parameter deletion
-
-**Example CloudTrail Query:**
-```sql
-fields @timestamp, userIdentity.principalId, eventName, requestParameters.secretId
-| filter eventSource = "secretsmanager.amazonaws.com"
-| filter eventName = "GetSecretValue"
-| sort @timestamp desc
-| limit 100
-```
-
----
-
-## 7. Secrets Rotation Summary
-
-| Secret | Rotation Method | Frequency | Lambda | Status |
-|--------|----------------|-----------|---------|--------|
-| JWT Secret | Automatic | 30 days | JwtSecretRotatorFunction | Active |
-| IdP Certificate | Manual | Certificate expiry (~1 year) | N/A | Manual |
-| GitHub Token | Manual | 90 days (recommended) | N/A | Manual |
-| Notify API Key | Manual | Service-dependent | N/A | Manual |
-| GitHub Secrets (IAM Roles) | Manual | When role recreated | N/A | Manual |
+**Examples**: `AWS_ROLE_ARN`, `COST_EXPLORER_ROLE_ARN`, `ISB_NDX_USERS_GROUP_ID`
 
 ---
 
@@ -644,33 +393,33 @@ fields @timestamp, userIdentity.principalId, eventName, requestParameters.secret
 
 ### Implemented
 
-- [x] Customer-managed KMS encryption for all secrets
-- [x] Automatic rotation for JWT secret
-- [x] Least-privilege IAM access to secrets
-- [x] CloudTrail logging of secret access
-- [x] Secrets versioning (AWSCURRENT, AWSPREVIOUS)
-- [x] GitHub secrets masked in workflow logs
+- Customer-managed KMS encryption for all Secrets Manager secrets
+- Automatic rotation for the most critical secret (JWT signing key)
+- Least-privilege IAM policies scoped to specific secret ARNs
+- Lambda-level secret caching to reduce API call frequency
+- Reserved concurrency of 1 on the rotation Lambda to prevent race conditions
+- Secrets never stored in Lambda environment variables (only name references)
+- GitHub secrets masked in workflow logs
+- CDK `unsafePlainText` used only for placeholder values (IdP cert initial value)
 
-### Recommended Enhancements
+### Audit Trail
 
-- [ ] Implement automatic rotation for GitHub tokens
-- [ ] Add IdP certificate rotation Lambda
-- [ ] Create Secrets Manager rotation alarms
-- [ ] Implement secret access anomaly detection
-- [ ] Add secret expiry notifications (for manual secrets)
+All secret access is logged via CloudTrail:
+- `secretsmanager:GetSecretValue` -- secret retrieval
+- `secretsmanager:PutSecretValue` -- rotation writes
+- `secretsmanager:UpdateSecretVersionStage` -- rotation promotion
+- `ssm:GetParameter` -- parameter reads
+- `kms:Decrypt` -- KMS key usage for decryption
 
 ---
 
 ## Related Documents
 
-- [60-auth-architecture.md](./60-auth-architecture.md) - JWT and SAML authentication
-- [61-encryption.md](./61-encryption.md) - KMS encryption
-- [51-oidc-configuration.md](./51-oidc-configuration.md) - GitHub OIDC
+- [60-auth-architecture.md](./60-auth-architecture.md) - JWT and SAML authentication flows
+- [61-encryption.md](./61-encryption.md) - KMS key management and encryption at rest
+- [05-service-control-policies.md](./05-service-control-policies.md) - Guardrails protecting ISB resources
+- [10-isb-core-architecture.md](./10-isb-core-architecture.md) - Core ISB Lambda and data architecture
+- [51-oidc-configuration.md](./51-oidc-configuration.md) - GitHub OIDC and role ARN configuration
 
 ---
-
-**Source Files:**
-- Auth API: `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/infrastructure/lib/components/api/auth-api.ts`
-- Data Resources: `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/infrastructure/lib/isb-data-resources.ts`
-- JWT Rotator: `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/lambdas/helpers/secret-rotator/`
-- Workflows: `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/*/.github/workflows/*.yml`
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*
