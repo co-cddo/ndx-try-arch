@@ -1,439 +1,381 @@
 # ISB CDDO Customizations
 
+> **Last Updated**: 2026-03-02
+> **Source**: [co-cddo/innovation-sandbox-on-aws](https://github.com/co-cddo/innovation-sandbox-on-aws)
+> **Captured SHA**: `cf75b87`
+
 ## Executive Summary
 
-The UK government's Central Digital & Data Office (CDDO) has forked the AWS Innovation Sandbox on AWS solution to support cross-government cloud experimentation and training initiatives. This document analyzes the co-cddo fork's customizations, divergence from upstream, and UK-specific adaptations.
+The UK Government's Central Digital and Data Office (CDDO) operates a fork of the AWS Innovation Sandbox on AWS solution (v1.1.4, solution ID SO0284) to support cross-government cloud experimentation and digital skills training. The fork follows a **non-invasive extension pattern**: the upstream codebase remains completely unmodified, with all CDDO-specific functionality delivered through six satellite repositories that integrate via EventBridge events and the ISB REST API. This architecture provides a clean merge path for upstream upgrades while enabling rapid iteration on government-specific features.
 
-**Key Findings:**
-- **Minimal Code Divergence:** Fork maintains upstream code compatibility
-- **Extension Architecture:** Custom functionality via external satellites
-- **Version Status:** v1.1.4 (3 releases behind upstream v1.1.7)
-- **Customization Strategy:** Non-invasive extensions for easy upgrade path
+**Key findings:**
 
-**Custom Components:**
-1. innovation-sandbox-on-aws-costs (Lease cost collection)
-2. innovation-sandbox-on-aws-deployer (CloudFormation/CDK deployment)
-3. innovation-sandbox-on-aws-approver (Enhanced approval workflow)
-4. innovation-sandbox-on-aws-utils (Account provisioning scripts)
+- **Zero core code divergence** -- the fork at SHA `cf75b87` has no changes to upstream source code
+- **Six satellite services** -- Approver, Billing Separator, Costs, Deployer, Client library, and Utils scripts
+- **Six releases behind upstream** -- v1.1.4 vs v1.2.0 (10 upstream commits, 451 files changed)
+- **Event-driven integration** -- satellites subscribe to and publish on the ISB EventBridge bus
+- **UK government adaptations** -- `@dsit.gov.uk` email domain, `ndx` namespace, `us-east-1`/`us-west-2` regions, Slack-based approval workflow, 91-day billing quarantine
+
+## Customization Strategy
+
+### Non-Invasive Extension Architecture
+
+```mermaid
+graph TB
+    subgraph "Upstream AWS Solution (Unmodified)"
+        CORE[ISB Core v1.1.4<br/>co-cddo fork]
+        API[API Gateway<br/>REST API]
+        EB[ISBEventBus<br/>EventBridge]
+        DDB[(DynamoDB<br/>Leases / Accounts)]
+    end
+
+    subgraph "CDDO Satellite Services"
+        APPROVER[Approver<br/>19-Rule Scoring + Slack]
+        BILLING[Billing Separator<br/>91-Day Quarantine]
+        COSTS[Costs<br/>Cost Explorer + CSV]
+        DEPLOYER[Deployer<br/>CFn/CDK to Sub-Accounts]
+        CLIENT["ISB Client (@co-cddo/isb-client)<br/>JWT-Authenticated API Wrapper"]
+        UTILS[Utils<br/>Python Admin Scripts]
+    end
+
+    EB -->|LeaseRequested| APPROVER
+    EB -->|AccountCleanupSucceeded| APPROVER
+    EB -->|MoveAccount via CloudTrail| BILLING
+    EB -->|LeaseTerminated| COSTS
+    EB -->|LeaseApproved| DEPLOYER
+
+    APPROVER -->|reviewLease| API
+    COSTS -->|fetchLease| API
+    DEPLOYER -->|lookupLease| API
+    UTILS -->|registerAccount| API
+
+    APPROVER -.->|Publishes events| EB
+    COSTS -.->|LeaseCostsGenerated| EB
+    DEPLOYER -.->|DeploymentSucceeded/Failed| EB
+
+    CLIENT -.->|Shared by| APPROVER
+    CLIENT -.->|Shared by| COSTS
+    CLIENT -.->|Shared by| DEPLOYER
+
+    style CORE fill:#e1f5e1
+    style APPROVER fill:#fff3cd
+    style BILLING fill:#fff3cd
+    style COSTS fill:#fff3cd
+    style DEPLOYER fill:#fff3cd
+    style CLIENT fill:#d4edda
+    style UTILS fill:#f8d7da
+```
+
+**Benefits of this approach:**
+
+1. **Clean merge path** -- no conflicts when pulling upstream updates (zero code divergence confirmed by `git diff`)
+2. **Independent lifecycles** -- each satellite deploys and scales independently via its own CDK stack
+3. **Modular enablement** -- satellites can be disabled without affecting core ISB functionality
+4. **Shared client library** -- `@co-cddo/isb-client` provides authenticated ISB API access to all TypeScript satellites
+5. **Contribute back** -- generic improvements can be submitted upstream as pull requests
 
 ---
 
-## Fork Status Analysis
+## Fork Status
 
 ### Version Comparison
 
 | Aspect | Upstream (aws-solutions) | CDDO Fork (co-cddo) |
 |--------|--------------------------|---------------------|
-| **Current Version** | v1.1.7 (2026-01-20) | v1.1.4 (2025-12-16) |
-| **Version Lag** | - | 3 releases behind (1 month) |
-| **Primary Language** | TypeScript (98.6%) | TypeScript (98.6%) |
+| **Current Version** | v1.2.0 | v1.1.4 |
+| **Releases Behind** | -- | 6 (v1.1.5, v1.1.6, v1.1.7, v1.1.8, v1.2.0) |
+| **Upstream Commits Ahead** | 10 | -- |
+| **Files Changed** | 451 | 0 (clean fork) |
+| **Lines Added (upstream)** | +50,515 | -- |
+| **Lines Removed (upstream)** | -18,274 | -- |
+| **Fork SHA** | -- | `cf75b87` |
 | **License** | Apache 2.0 | Apache 2.0 (unchanged) |
-| **Stars** | 47 | 2 |
-| **Forks** | 15 | 0 (no further forks) |
 
 ### Missing Upstream Features
 
-**Not yet in CDDO fork (as of v1.1.4):**
+Since the CDDO fork was taken at v1.1.4, the following upstream releases have been made:
 
-**From v1.1.7 (2026-01-20):**
-- AWS Nuke upgrade to v3.63.2 (fixes SCP-protected log group deletion issues)
+| Version | Key Changes |
+|---------|-------------|
+| **v1.1.5** | Security patch: `qs` library vulnerability fix |
+| **v1.1.6** | Security patches: `@remix-run/router`, `glib2`, `libcap`, `python3` |
+| **v1.1.7** | AWS Nuke upgrade to v3.63.2 (fixes SCP-protected log group deletion) |
+| **v1.1.8** | Undisclosed changes (merge commit only) |
+| **v1.2.0** | Major release -- likely includes blueprints feature and significant refactoring (451 files changed, 50K+ insertions) |
 
-**From v1.1.6 (2026-01-12):**
-- Security patches: @remix-run/router, glib2, libcap, python3
-
-**From v1.1.5 (2026-01-05):**
-- Critical: `qs` library vulnerability fix (CVE-2022-24999)
-
-**Recommendation:** Upgrade to v1.1.7 to receive security patches and AWS Nuke fixes.
+**Upgrade recommendation**: Upgrade to at least v1.1.7 for security patches and Nuke fixes. Evaluate v1.2.0 carefully as the large changeset (50K+ lines) may introduce breaking changes requiring satellite service updates.
 
 ---
 
-## Customization Strategy Overview
+## CDDO Satellite Services
 
-### Non-Invasive Extension Pattern
+### 1. Approver (innovation-sandbox-on-aws-approver)
 
-```mermaid
-graph TB
-    subgraph "Upstream AWS Solution"
-        CORE[ISB Core<br/>v1.1.4]
-        API[API Gateway]
-        EB[EventBridge]
-    end
+**Repository**: [co-cddo/innovation-sandbox-on-aws-approver](https://github.com/co-cddo/innovation-sandbox-on-aws-approver)
+**Technology**: TypeScript, CDK, Node.js 20+, esbuild, Vitest
+**Purpose**: Automated lease approval with 19-rule scoring engine, AI-enhanced risk assessment, business hours enforcement, and Slack-based manual review workflow.
 
-    subgraph "CDDO Extensions (Separate Repos)"
-        COSTS[innovation-sandbox-costs<br/>Cost Collection]
-        DEPLOYER[innovation-sandbox-deployer<br/>Template Deployment]
-        APPROVER[innovation-sandbox-approver<br/>Enhanced Approvals]
-        UTILS[innovation-sandbox-utils<br/>Account Scripts]
-    end
+**Architecture**:
 
-    EB -->|LeaseTerminated event| COSTS
-    EB -->|LeaseApproved event| DEPLOYER
-    EB -->|LeaseCreated event| APPROVER
-    CORE -.->|No code changes| API
-    COSTS -.->|Publishes events back| EB
-    DEPLOYER -.->|Publishes events back| EB
-    APPROVER -.->|Publishes events back| EB
+The approver replaces ISB's built-in manual approval flow. ISB routes all lease requests with `requiresManualApproval=true` to EventBridge; the approver listens for `LeaseRequested` events and makes autonomous approval decisions via a state machine.
 
-    style CORE fill:#e1f5e1
-    style COSTS fill:#fff3cd
-    style DEPLOYER fill:#fff3cd
-    style APPROVER fill:#fff3cd
-    style UTILS fill:#fff3cd
+**State Machine**:
+
+```
+RECEIVED -> VALIDATING -> TIMING_CHECK -> ACCOUNT_AVAILABILITY_CHECK -> SCORING -> DECIDING -> [APPROVED | DENIED | ESCALATED | DELAYED | ERROR]
 ```
 
-**Benefits of this approach:**
-1. **Clean merge path:** No conflicts when pulling upstream updates
-2. **Modular architecture:** Extensions can be enabled/disabled independently
-3. **Separate lifecycles:** CDDO components can evolve without blocking upstream upgrades
-4. **Contribute back:** Generic improvements can be submitted to AWS as PRs
+Terminal states:
+- **APPROVED** -- score below threshold (default: 20), auto-approved via ISB API
+- **DENIED** -- high-risk request, auto-denied
+- **ESCALATED** -- borderline score, sent to Slack for manual review
+- **DELAYED** -- outside business hours or no accounts available, queued via SQS
+
+**Scoring Engine** (19 rules):
+
+| Rule | Weight | Type | Description |
+|------|--------|------|-------------|
+| `allow_list_override` | -100 | Bonus | Guarantees approval for allow-listed users |
+| `verified_gov_domain` | -5 | Bonus | Domain in ukps-domains allowlist |
+| `familiar_template` | -1 | Bonus | Previously used template successfully |
+| `manual_early_termination` | -2 | Bonus | Responsible early termination history |
+| `org_clean_record` | -2 | Bonus | Domain has 5+ leases with zero negatives in 90d |
+| `expired_leases` | +2 | Penalty | Per expired lease in last 30 days |
+| `budget_exceeded` | +5 | Penalty | Per budget exceeded lease in last 30 days |
+| `first_time_user` | +5 | Penalty | No previous lease history |
+| `first_time_user_group_mailbox_compound` | +20 | Penalty | First lease AND group mailbox detected (AI) |
+| `cooldown_violation` | +10 | Penalty | Request within 1 hour of previous lease |
+| `outside_target_audience` | +50 | Penalty | Domain NOT in local authority allowlist |
+| `group_mailbox_detected` | +20 | Penalty | AI detected group email pattern (Bedrock) |
+| `org_recent_negative` | +3 | Penalty | Same domain had negative outcomes in 30d |
+| `template_hopper` | +2 | Penalty | 3+ leases never repeating a template |
+| `end_of_window` | +2 | Penalty | Request in final 2 hours (5-7pm London) |
+| `budget_amount` | +1/unit | Per-unit | +1 per $10 of budget requested |
+| `duration_requested` | +1/unit | Per-unit | +1 per 8 hours of duration |
+| `user_rate_limit` | +5/excess | Rate limit | Per request beyond 2/hour |
+| `org_rate_limit` | +3 | Rate limit | Triggered if 5+ org users submit in 1 hour |
+
+**Auto-approve threshold**: Score must be strictly less than 20 (configurable via `AUTO_APPROVE_THRESHOLD` env var).
+
+**Infrastructure (CDK)**:
+- DynamoDB: `ApproverIdempotency` table (idempotent processing), `ApproverQueuePosition` table (FIFO queue when no accounts available)
+- S3: Domain allowlist bucket (populated from [ukps-domains](https://github.com/govuk-digital-backbone/ukps-domains))
+- SQS: Delay queue with DLQ (out-of-hours/no-account requests)
+- SNS: `isb-approval-notifications` topic for Slack integration
+- Amazon Bedrock: AI-based group mailbox detection
+- AWS Chatbot: Slack channel configuration with Approve/Deny custom actions
+- EventBridge Scheduler: 30-minute queue check for pending requests
+- CloudWatch: Error rate, latency, DLQ depth, and Slack action alarms
+
+**Slack Integration**:
+- Notifications sent via SNS to Amazon Q Developer (Chatbot) Slack channel
+- Custom actions: `isb-approve` and `isb-deny` buttons invoke separate Lambda functions
+- `SlackApproveLambda` and `SlackDenyLambda` call the ISB API `/leases/{id}/review` endpoint
+- CloudWatch dashboard: `ISB-Approver-Slack-Actions`
+
+**Source**: `/Users/CNesbittSmith/httpdocs/ndx-try-arch/repos/innovation-sandbox-on-aws-approver/`
 
 ---
 
-## CDDO Custom Components
+### 2. Billing Separator (innovation-sandbox-on-aws-billing-seperator)
 
-### 1. Innovation Sandbox Costs (innovation-sandbox-on-aws-costs)
+**Repository**: [co-cddo/innovation-sandbox-on-aws-billing-seperator](https://github.com/co-cddo/innovation-sandbox-on-aws-billing-seperator)
+**Technology**: TypeScript, CDK, Node.js 22, Jest
+**Purpose**: 91-day quarantine of sandbox accounts after cleanup to prevent billing data attribution leakage between successive leaseholders.
 
-**Repository:** https://github.com/co-cddo/innovation-sandbox-on-aws-costs
+**Problem**: When a sandbox account is recycled, AWS Cost and Usage Report (CUR) data for the previous leaseholder may still be accumulating. If the account is immediately reassigned, the new leaseholder's billing view would include residual charges from the previous tenant.
 
-**Purpose:** Automated cost collection for terminated leases with 24-hour delay
+**Architecture**:
 
-**Architecture:**
+The billing separator deploys across two stacks:
+
+- **OrgMgmtStack** (Org Management account): EventBridge rule forwarding CloudTrail `MoveAccount` events to the Hub account's custom event bus
+- **HubStack** (Hub account): Event bus, SQS queue, two Lambda functions, EventBridge Scheduler group
+
+**Flow**:
 
 ```mermaid
 sequenceDiagram
     participant ISB as ISB Core
-    participant EB as EventBridge
+    participant CT as CloudTrail
+    participant EB1 as EventBridge (OrgMgmt)
+    participant EB2 as EventBridge (Hub)
+    participant SQS as SQS Queue
+    participant QL as QuarantineLambda
+    participant ORG as AWS Organizations
     participant SCHED as EventBridge Scheduler
-    participant LAMBDA as Cost Collector Lambda
-    participant CE as Cost Explorer
-    participant S3 as S3 Bucket
+    participant UQL as UnquarantineLambda
 
-    ISB->>EB: Publish LeaseTerminated event
-    EB->>LAMBDA: Trigger Scheduler Lambda
-    LAMBDA->>SCHED: Create one-shot schedule (24h delay)
+    ISB->>ORG: Move account to Available OU (cleanup complete)
+    CT->>EB1: CloudTrail MoveAccount event
+    EB1->>EB2: Forward to Hub event bus
+    EB2->>SQS: Route to processing queue
+    SQS->>QL: Trigger QuarantineLambda
 
-    Note over SCHED: Wait 24 hours for billing data
+    QL->>ORG: Verify source was CleanUp OU
+    QL->>ORG: Check for 'do-not-separate' bypass tag
+    QL->>ORG: Move account: Available -> Quarantine OU
+    QL->>SCHED: Create one-shot schedule (91 days)
 
-    SCHED->>LAMBDA: Trigger Cost Collector
-    LAMBDA->>ISB: GET /leases/{leaseId} (fetch details)
-    LAMBDA->>CE: GetCostAndUsage (cross-account)
-    CE-->>LAMBDA: Cost data by service
-    LAMBDA->>LAMBDA: Generate CSV report
-    LAMBDA->>S3: Upload {leaseId}.csv
-    LAMBDA->>S3: Generate presigned URL (7-day expiry)
-    LAMBDA->>EB: Publish LeaseCostsGenerated event
+    Note over SCHED: Wait 91 days (2,184 hours)
+
+    SCHED->>UQL: Trigger UnquarantineLambda
+    UQL->>ORG: Move account: Quarantine -> Available OU
+    UQL->>SCHED: Delete schedule (cleanup)
 ```
 
-**Key Features:**
-- **24-hour delay:** Waits for AWS billing data to settle
-- **Cross-account:** Assumes role in orgManagement for Cost Explorer access
-- **ISB API integration:** Fetches lease details via JWT-authenticated Lambda-to-Lambda calls
-- **CSV reports:** Service-level cost breakdown
-- **Presigned URLs:** Secure 7-day download links
-- **3-year retention:** S3 lifecycle policy for compliance
+**Key Constants** (from `source/lambdas/shared/constants.ts`):
+- `QUARANTINE_DURATION_HOURS`: 2,184 (91 days)
+- `SCHEDULER_GROUP`: `isb-billing-separator`
+- `BYPASS_QUARANTINE_TAG_KEY`: `do-not-separate` (AWS Organizations tag to skip quarantine)
+- `MAX_SQS_RECORDS_PER_BATCH`: 10
 
-**Event Schema:**
+**Features**:
+- Idempotent processing (skips accounts already in Quarantine status)
+- Bypass tag (`do-not-separate`) for emergency account recycling
+- Cross-account role chain using ISB's own `fromTemporaryIsbOrgManagementCredentials` utility
+- SQS partial batch response pattern for reliable event processing
+- CloudWatch alarms for DLQ depth, Lambda errors, and EventBridge rule delivery failures
+- ISB Commons dependency via git submodule (`deps/isb/source/common`)
 
-**Input:** `LeaseTerminated`
-```json
-{
-  "detail-type": "LeaseTerminated",
-  "source": "isb",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "550e8400-e29b-41d4-a716-446655440000"
-    },
-    "accountId": "123456789012",
-    "reason": { "type": "Expired" }
-  }
-}
-```
-
-**Output:** `LeaseCostsGenerated`
-```json
-{
-  "detail-type": "LeaseCostsGenerated",
-  "source": "isb-costs",
-  "detail": {
-    "leaseId": "550e8400-e29b-41d4-a716-446655440000",
-    "accountId": "123456789012",
-    "totalCost": 150.50,
-    "currency": "USD",
-    "startDate": "2026-01-15",
-    "endDate": "2026-02-03",
-    "csvUrl": "https://bucket.s3.amazonaws.com/lease.csv?signature=...",
-    "urlExpiresAt": "2026-02-10T12:00:00.000Z",
-    "userEmail": "user@example.gov.uk"
-  }
-}
-```
-
-**Deployment:**
-- **Technology:** TypeScript Lambda (Node.js 22)
-- **IAM:** Assume role in orgManagement account for Cost Explorer
-- **S3 Bucket:** `isb-lease-costs-{account-id}` (us-west-2)
-- **Scheduler:** EventBridge Scheduler (one-shot schedules)
-
-**Source Code Location:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-costs/`
+**Source**: `/Users/CNesbittSmith/httpdocs/ndx-try-arch/repos/innovation-sandbox-on-aws-billing-seperator/`
 
 ---
 
-### 2. Innovation Sandbox Deployer (innovation-sandbox-on-aws-deployer)
+### 3. Costs (innovation-sandbox-on-aws-costs)
 
-**Repository:** https://github.com/co-cddo/innovation-sandbox-on-aws-deployer
+**Repository**: [co-cddo/innovation-sandbox-on-aws-costs](https://github.com/co-cddo/innovation-sandbox-on-aws-costs)
+**Technology**: TypeScript, CDK, Node.js, Vitest, Zod (v4), X-Ray tracing
+**Purpose**: Automated cost collection for terminated leases with delayed execution, CSV reporting, and EventBridge event emission.
 
-**Purpose:** Automatically deploy CloudFormation templates and CDK apps to approved sandbox accounts
+**Architecture**:
 
-**Architecture:**
+Two Lambda functions orchestrated by EventBridge Scheduler:
 
-```mermaid
-sequenceDiagram
-    participant ISB as ISB Core
-    participant EB as EventBridge
-    participant LAMBDA as Deployer Lambda
-    participant GH as GitHub
-    participant STS as AWS STS
-    participant CFN as CloudFormation (Target Account)
+1. **Scheduler Handler** -- triggered by `LeaseTerminated` events, creates a one-shot EventBridge Schedule that fires after a configurable delay (default 8 hours via `BILLING_PADDING_HOURS`) to allow billing data to settle
+2. **Cost Collector Handler** -- triggered by the scheduled event, performs the full cost collection pipeline:
+   - Fetches lease details from ISB API (via `@co-cddo/isb-client`)
+   - Assumes role in orgManagement account for Cost Explorer access
+   - Calculates billing window with configurable padding
+   - Queries Cost Explorer with pagination
+   - Generates CSV report
+   - Uploads to S3 with SHA-256 checksum integrity verification
+   - Generates presigned URL (7-day expiry, configurable via `PRESIGNED_URL_EXPIRY_DAYS`)
+   - Emits `LeaseCostsGenerated` event to EventBridge
+   - Publishes CloudWatch business metrics (TotalCost, ResourceCount, ProcessingDuration)
+   - Deletes the scheduler schedule (best-effort, auto-delete also configured)
 
-    ISB->>EB: Publish LeaseApproved event
-    EB->>LAMBDA: Trigger Deployer
-    LAMBDA->>ISB: GET /leases/{leaseId} (fetch template name)
-    LAMBDA->>GH: Check for cdk.json (detect scenario type)
+3. **Cleanup Handler** -- handles orphaned schedule cleanup
 
-    alt CDK Scenario
-        LAMBDA->>GH: Sparse clone scenario folder
-        LAMBDA->>LAMBDA: npm ci (install dependencies)
-        LAMBDA->>LAMBDA: cdk synth (generate CloudFormation)
-        LAMBDA->>LAMBDA: Extract template from cdk.out/
-    else CloudFormation Scenario
-        LAMBDA->>GH: Fetch template.yaml (raw content)
-    end
+**CDK Infrastructure**:
+- `CostCollectionStack` (Hub account): S3 bucket, Lambda functions, EventBridge rules, Scheduler group
+- `CostExplorerRoleStack` (OrgMgmt account): IAM role for cross-account Cost Explorer access
 
-    LAMBDA->>STS: AssumeRole (target account)
-    STS-->>LAMBDA: Temporary credentials
-    LAMBDA->>CFN: CreateStack / UpdateStack
-    CFN-->>LAMBDA: Stack creation initiated
-    LAMBDA->>EB: Publish DeploymentSucceeded/Failed event
-```
+**Source**: `/Users/CNesbittSmith/httpdocs/ndx-try-arch/repos/innovation-sandbox-on-aws-costs/`
 
-**Key Features:**
+---
 
-**CDK Support:**
+### 4. Deployer (innovation-sandbox-on-aws-deployer)
+
+**Repository**: [co-cddo/innovation-sandbox-on-aws-deployer](https://github.com/co-cddo/innovation-sandbox-on-aws-deployer)
+**Technology**: TypeScript, CDK, Node.js 22, esbuild, Vitest
+**Purpose**: Automatically deploy CloudFormation templates and CDK applications to sandbox sub-accounts when leases are approved.
+
+**Deployment Flow**:
+
+1. **Event parsing** -- validates incoming `LeaseApproved` EventBridge event
+2. **Lease lookup** -- fetches lease details from DynamoDB to get `accountId` and `templateName`
+3. **Template handling** -- detects scenario type (CDK vs CloudFormation), fetches from GitHub
+4. **Template validation** -- validates CloudFormation template structure
+5. **Role assumption** -- assumes role in target sub-account via STS
+6. **CDK bootstrap** -- ensures target account has CDKToolkit stack (CDK scenarios only)
+7. **Stack deployment** -- creates/updates CloudFormation stack with parameters mapped from lease data
+8. **Event emission** -- publishes `DeploymentSucceeded` or `DeploymentFailed` to EventBridge
+
+**CDK Scenario Support**:
 - Auto-detects CDK projects via `cdk.json` presence
-- Supports CDK in root folder or `/cdk` subfolder
-- Sparse clones scenario from GitHub (efficient, only needed files)
+- Sparse clones scenario from GitHub (only needed files)
 - Installs dependencies securely (`npm ci --ignore-scripts`)
 - Synthesizes CDK to CloudFormation (`cdk synth`)
-- Supports TypeScript and JavaScript CDK apps
 
-**CloudFormation Support:**
-- Fetches templates from GitHub raw URLs
-- Parameter enrichment from lease data
-- Stack naming: `isb-{leaseId}-{templateName}`
+**CDK Infrastructure**:
+- `DeployerStack` (Hub account): Lambda function, EventBridge rules, Secrets Manager integration
+- `GithubOidcStack`: OIDC provider for GitHub Actions CI/CD
 
-**Security:**
-- Cross-account deployment via assumable IAM role (`ndx_IsbUsersPS`)
-- GitHub token from Secrets Manager (private repos)
-- No postinstall scripts executed (supply chain attack protection)
+**Environment Variables**:
 
-**Deployment Events:**
+| Variable | Purpose |
+|----------|---------|
+| `GITHUB_REPO` | Scenario repository (e.g., `co-cddo/ndx_try_aws_scenarios`) |
+| `GITHUB_BRANCH` | Branch to fetch from (e.g., `main`) |
+| `TARGET_ROLE_NAME` | Assumable role in sub-accounts (e.g., `ndx_IsbUsersPS`) |
+| `DEPLOY_REGION` | Target deployment region |
 
-**Input:** `LeaseApproved`
-```json
-{
-  "detail-type": "LeaseApproved",
-  "source": "isb",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "550e8400-e29b-41d4-a716-446655440000"
-    },
-    "accountId": "123456789012",
-    "approvedBy": "manager@example.com"
-  }
-}
-```
-
-**Output:** `DeploymentSucceeded` / `DeploymentFailed`
-```json
-{
-  "detail-type": "DeploymentSucceeded",
-  "source": "isb-deployer",
-  "detail": {
-    "leaseId": "550e8400-e29b-41d4-a716-446655440000",
-    "accountId": "123456789012",
-    "stackName": "isb-lease-550e8400-my-scenario",
-    "stackId": "arn:aws:cloudformation:...",
-    "templateName": "my-scenario",
-    "scenarioType": "cdk" | "cloudformation"
-  }
-}
-```
-
-**Deployment:**
-- **Technology:** TypeScript Lambda (Node.js 22)
-- **Timeout:** 15 minutes (CDK synthesis can be slow)
-- **Memory:** 3008 MB (for npm install + cdk synth)
-- **GitHub Integration:** Fetches from `co-cddo/ndx_try_aws_scenarios`
-- **IAM:** AssumeRole permissions for target accounts
-
-**Environment Variables:**
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `LEASE_TABLE_NAME` | `isb-leases` | DynamoDB table |
-| `GITHUB_REPO` | `co-cddo/ndx_try_aws_scenarios` | Scenario repository |
-| `GITHUB_BRANCH` | `main` | Branch to fetch from |
-| `GITHUB_PATH` | `cloudformation/scenarios` | Scenario directory |
-| `TARGET_ROLE_NAME` | `ndx_IsbUsersPS` | Assumable role in sub-accounts |
-
-**Source Code Location:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-deployer/`
+**Source**: `/Users/CNesbittSmith/httpdocs/ndx-try-arch/repos/innovation-sandbox-on-aws-deployer/`
 
 ---
 
-### 3. Innovation Sandbox Approver (innovation-sandbox-on-aws-approver)
+### 5. ISB Client (@co-cddo/isb-client)
 
-**Repository:** https://github.com/co-cddo/innovation-sandbox-on-aws-approver
+**Repository**: [co-cddo/innovation-sandbox-on-aws-client](https://github.com/co-cddo/innovation-sandbox-on-aws-client)
+**Technology**: TypeScript, Node.js 20+, Jest, Yarn 4
+**Version**: 2.0.1 (distributed as tarball via GitHub Releases)
+**Purpose**: Shared authenticated API client for satellite services to interact with the ISB REST API.
 
-**Purpose:** Enhanced approval workflow with risk scoring (assumed, not in local repos)
+**Features**:
+- JWT token signing using HS256 with secret from Secrets Manager
+- Automatic token caching with 60-second pre-expiry refresh
+- Secret cache invalidation on 401/403 responses (handles secret rotation)
+- JSend response format parsing
+- Paginated list endpoint support
+- Read operations (`fetchLease`, `fetchLeaseByKey`, `fetchAccount`, `fetchTemplate`, `fetchAllAccounts`)
+- Write operations (`reviewLease`, `registerAccount`)
+- Graceful degradation -- returns `null` on 404, 5xx, or network errors for read operations
+- Configurable timeout (default 5 seconds)
+- Correlation ID propagation via `X-Correlation-Id` header
 
-**Expected Architecture (based on upstream pattern):**
+**Usage by satellites**:
 
-```mermaid
-graph TB
-    subgraph "ISB Core"
-        EB[EventBridge]
-    end
+| Satellite | ISB Client Version | Operations Used |
+|-----------|-------------------|-----------------|
+| Approver | v2.0.1 | `fetchLease`, `fetchAccount`, `fetchAllAccounts`, `reviewLease` |
+| Costs | v2.0.0 | `fetchLease` (via `getLeaseDetails`) |
+| Deployer | v2.0.0 | `fetchLease` (via `lookupLease`) |
 
-    subgraph "Approver Service"
-        SFN[Step Functions<br/>Approval Workflow]
-        RULES[Scoring Rules Engine]
-        BEDROCK[Amazon Bedrock<br/>AI Risk Assessment]
-        DDB[ApprovalHistory DDB]
-    end
-
-    subgraph "Admin Dashboard"
-        UI[React Frontend]
-    end
-
-    EB -->|LeaseCreated event| SFN
-    SFN -->|Execute rules| RULES
-    SFN -->|AI assessment| BEDROCK
-    RULES -->|Aggregate scores| SFN
-    BEDROCK -->|Risk score| SFN
-
-    SFN -.->|Auto-approve if score >= 80| EB
-    SFN -.->|Manual review if 50-79| UI
-    SFN -.->|Auto-reject if score < 50| EB
-
-    SFN -->|Log decision| DDB
-```
-
-**Expected Features:**
-- Multi-rule scoring engine (user history, org policy, budget)
-- AI-enhanced risk assessment (Amazon Bedrock)
-- Automated approval/rejection thresholds
-- Manual review queue for borderline cases
-- Audit trail in DynamoDB
-
-**Status:** Not present in local repos, assumed to be deployed separately
+**Source**: `/Users/CNesbittSmith/httpdocs/ndx-try-arch/repos/innovation-sandbox-on-aws-client/`
 
 ---
 
-### 4. Innovation Sandbox Utils (innovation-sandbox-on-aws-utils)
+### 6. Utils (innovation-sandbox-on-aws-utils)
 
-**Repository:** https://github.com/co-cddo/innovation-sandbox-on-aws-utils
+**Repository**: [co-cddo/innovation-sandbox-on-aws-utils](https://github.com/co-cddo/innovation-sandbox-on-aws-utils)
+**Technology**: Python 3, boto3
+**Purpose**: CLI scripts for manual operational tasks that complement the ISB web interface.
 
-**Purpose:** Python script for manual account pool provisioning
+**Scripts**:
 
-**Tool:** `create_sandbox_pool_account.py`
+| Script | Purpose |
+|--------|---------|
+| `create_sandbox_pool_account.py` | Create and register new pool accounts (Organizations + ISB API) |
+| `create_user.py` | Create Identity Center users and add to `ndx_IsbUsersGroup` |
+| `assign_lease.py` | Assign leases via API, optionally configure local SSO profiles |
+| `terminate_lease.py` | Terminate all active leases for a user |
+| `force_release_account.py` | Force-release stuck accounts |
+| `clean_console_state.py` | Clean AWS Console state (recently visited services, favorites, theme) from recycled accounts via undocumented CCS API |
 
-**Workflow:**
+**Key Constants** (from `create_sandbox_pool_account.py`):
 
-```mermaid
-sequenceDiagram
-    participant SCRIPT as Python Script
-    participant ORG as AWS Organizations
-    participant ENTRY as Entry OU
-    participant LAMBDA as ISB Lambda
-    participant READY as Ready OU
+| Constant | Value |
+|----------|-------|
+| `ENTRY_OU` | `ou-2laj-2by9v0sr` |
+| `SANDBOX_READY_OU` | `ou-2laj-oihxgbtr` |
+| `BILLING_VIEW_ARN` | `arn:aws:billing::955063685555:billingview/custom-466e2613-e09b-4787-a93a-736f0fb1564b` |
+| Account email pattern | `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk` |
+| Account name pattern | `pool-NNN` |
 
-    SCRIPT->>ORG: List existing pool-NNN accounts
-    SCRIPT->>SCRIPT: Determine next number (e.g., pool-009)
-    SCRIPT->>ORG: CreateAccount (pool-009)
-    ORG-->>SCRIPT: Account ID: 123456789012
+**Authentication**: All scripts use AWS SSO profiles (`NDX/orgManagement`, `NDX/InnovationSandboxHub`) and generate HS256 JWT tokens using the ISB signing secret from Secrets Manager.
 
-    SCRIPT->>ORG: MoveAccount (root → Entry OU)
-    SCRIPT->>ORG: Add to billing view
-    SCRIPT->>LAMBDA: Invoke ISB Lambda (register account)
-    LAMBDA->>LAMBDA: Trigger cleanup workflow
-
-    Note over LAMBDA: Innovation Sandbox cleanup (8-12 minutes)
-
-    LAMBDA->>ORG: MoveAccount (Entry OU → Ready OU)
-    SCRIPT->>SCRIPT: Poll for OU move
-    SCRIPT->>SCRIPT: Report completion
-```
-
-**Key Steps:**
-
-1. **SSO Authentication:** Validates AWS SSO sessions (`NDX/orgManagement`, `NDX/InnovationSandboxHub`)
-2. **List Accounts:** Finds all `pool-NNN` accounts
-3. **Create Account:** Creates next sequential account (e.g., `pool-009`)
-4. **Move to Entry OU:** Moves to `ou-2laj-2by9v0sr`
-5. **Add to Billing View:** Adds to custom billing view for cost tracking
-6. **Register with ISB:** Invokes ISB Lambda directly with mock JWT
-7. **Wait for Cleanup:** Polls until account moved to Ready OU (`ou-2laj-oihxgbtr`)
-8. **Report:** Total time (typically 12-15 minutes)
-
-**Account Naming:**
-- Pattern: `pool-NNN` (e.g., `pool-001`, `pool-002`)
-- Email: `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk`
-
-**Configuration:**
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `ENTRY_OU` | `ou-2laj-2by9v0sr` | OU for registration |
-| `SANDBOX_READY_OU` | `ou-2laj-oihxgbtr` | OU after cleanup |
-| `BILLING_VIEW_ARN` | `arn:aws:billing::955063685555:billingview/...` | Cost tracking |
-
-**Usage:**
-
-**Create new account:**
-```bash
-source venv/bin/activate
-python create_sandbox_pool_account.py
-```
-
-**Recover partially provisioned account:**
-```bash
-python create_sandbox_pool_account.py 123456789012
-```
-
-**Output:**
-```
-============================================================
-🆕 STEP 3: Create new account
-============================================================
-   Account name: pool-009
-   Email: ndx-try-provider+gds-ndx-try-aws-pool-009@dsit.gov.uk
-   ✅ Account created: 123456789012
-
-============================================================
-📝 STEP 5: Register with Innovation Sandbox
-============================================================
-   ✅ Registered successfully!
-   📄 Status: CleanUp
-
-============================================================
-🎉 COMPLETE
-============================================================
-   Account: pool-009 (123456789012)
-   ⏱️  Total time: 12m 34s
-```
-
-**Source Code Location:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-utils/create_sandbox_pool_account.py`
+**Source**: `/Users/CNesbittSmith/httpdocs/ndx-try-arch/repos/innovation-sandbox-on-aws-utils/`
 
 ---
 
@@ -441,22 +383,17 @@ python create_sandbox_pool_account.py 123456789012
 
 ### Global Configuration (global-config.yaml)
 
-**CDDO Customizations:**
+The ISB core is configured via AWS AppConfig profiles. Key CDDO-specific settings:
 
 ```yaml
-# Maintenance mode (disable new lease requests)
-maintenanceMode: true
-
-# Budget constraints
+maintenanceMode: true               # Controlled rollout
 leases:
   requireMaxBudget: true
-  maxBudget: 50              # USD (upstream default: 5000)
+  maxBudget: 50                     # USD (upstream default: 5000)
   requireMaxDuration: true
-  maxDurationHours: 168       # 7 days (upstream default: 168)
-  maxLeasesPerUser: 3        # Concurrent leases (upstream default: 3)
-  ttl: 30                     # Days (upstream default: 30)
-
-# Cleanup configuration
+  maxDurationHours: 168             # 7 days
+  maxLeasesPerUser: 3
+  ttl: 30                           # Days
 cleanup:
   numberOfFailedAttemptsToCancelCleanup: 3
   waitBeforeRetryFailedAttemptSeconds: 5
@@ -464,428 +401,205 @@ cleanup:
   waitBeforeRerunSuccessfulAttemptSeconds: 30
 ```
 
-**Comparison with Upstream Defaults:**
+| Setting | CDDO | Upstream Default | Rationale |
+|---------|------|------------------|-----------|
+| `maintenanceMode` | `true` | `false` | Controlled rollout for government users |
+| `maxBudget` | $50 | $5,000 | Cost control for training/experimentation |
+| `maxDurationHours` | 168 | 168 | Same (7 days) |
+| `maxLeasesPerUser` | 3 | 3 | Same |
 
-| Setting | CDDO | Upstream | Rationale |
-|---------|------|----------|-----------|
-| `maintenanceMode` | `true` | `false` | Controlled rollout |
-| `maxBudget` | `$50` | `$5000` | Cost control for training |
-| `maxDurationHours` | `168` (7 days) | `168` | Same |
-| `maxLeasesPerUser` | `3` | `3` | Same |
+### Nuke Configuration (nuke-config.yaml)
 
----
+Protected resources for AWS Nuke account cleanup:
 
-### AWS Nuke Configuration (nuke-config.yaml)
-
-**CDDO Customizations:**
-
-**Protected Resources:**
 ```yaml
+# Protected from deletion
 CloudFormationStack:
   - type: glob
-    value: StackSet-Isb-*          # Protect ISB-managed stacks
+    value: StackSet-Isb-*          # ISB-managed StackSet stacks
 
 IAMRole:
   - type: exact
     value: OrganizationAccountAccessRole
   - type: glob
-    value: AWSReservedSSO_*        # Protect SSO roles
+    value: AWSReservedSSO_*        # SSO-provisioned roles
   - type: contains
-    value: AWSControlTower         # Protect Control Tower roles
-```
+    value: AWSControlTower         # Control Tower roles
 
-**Settings:**
-```yaml
-NoDryRun: true                     # Execute deletions (not simulation)
-Force:
-  DeleteProtection: true           # Ignore deletion protection
-  GovernanceRetention: true        # Bypass governance retention
-  LegalHold: true                  # Remove legal holds
-```
-
-**Excluded Resource Types:**
-```yaml
-S3Object                           # Optimized: bucket deletion handles objects
+# Excluded resource types
+S3Object                           # Bucket deletion handles objects
 ConfigServiceConfigurationRecorder # Preserved for audit
 ConfigServiceDeliveryChannel       # Preserved for audit
 ```
 
-**Comparison with Upstream:**
-- **Same protection patterns** for Control Tower, SSO, OrganizationAccountAccessRole
-- **Same exclusions** for Config Service (audit requirements)
-- **No CDDO-specific exclusions** detected
+These protections are consistent with the upstream defaults and ensure that ISB infrastructure, SSO roles, and Control Tower configurations survive account recycling.
+
+### Deployment Configuration
+
+| Parameter | CDDO Value | Upstream Default |
+|-----------|-----------|------------------|
+| `NAMESPACE` | `ndx` | `myisb` |
+| `HUB_ACCOUNT_ID` | `955063685555` | Configurable |
+| `AWS_REGIONS` | `us-east-1`, `us-west-2` | Configurable |
+| `ADMIN_GROUP_NAME` | `ndx_IsbAdmins` | Configurable |
+| `MANAGER_GROUP_NAME` | `ndx_IsbManagers` | Configurable |
+| `USER_GROUP_NAME` | `ndx_IsbUsers` | Configurable |
+
+The `ndx` namespace prefixes all CloudFormation stack names, IAM roles, and resource identifiers, ensuring isolation from any other ISB deployments in the same AWS Organization.
 
 ---
 
-## UK Government Specific Adaptations
+## UK Government Adaptations
 
-### 1. Email Domain
+### Email Domain
 
-**CDDO:** `@dsit.gov.uk` (Department for Science, Innovation & Technology)
+All account and user emails use the `@dsit.gov.uk` domain (Department for Science, Innovation and Technology):
+- Pool account emails: `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk`
+- User emails: `{name}@dsit.gov.uk`
 
-**Example:**
-- Account email: `ndx-try-provider+gds-ndx-try-aws-pool-001@dsit.gov.uk`
-- User email: `user.name@dsit.gov.uk`
+### Region Strategy
 
-### 2. AWS Region Preference
+ISB is deployed exclusively in `us-east-1` and `us-west-2`:
+- **us-east-1**: Required for AWS Organizations API, IAM Identity Center
+- **us-west-2**: Primary compute region for Lambda, DynamoDB, API Gateway, CloudFront
+- Production UK government workloads would typically use `eu-west-2` (London); sandbox accounts use US regions for cost optimization and broader service availability
 
-**Primary Region:** `us-west-2` (Oregon)
+### Domain-Based Access Control
 
-**Rationale:**
-- Not UK region due to data sovereignty flexibility for sandbox environments
-- Cost optimization (US regions cheaper than EU)
-- Service availability (newer services launch in US first)
+The approver service integrates with the [ukps-domains](https://github.com/govuk-digital-backbone/ukps-domains) dataset -- a curated list of UK public sector email domains. This enables:
+- Automatic `-5` scoring bonus for verified government domains
+- Automatic `+50` scoring penalty for non-local-authority domains
+- AI-enhanced group mailbox detection via Amazon Bedrock
 
-**Note:** Production workloads would use `eu-west-2` (London) for data sovereignty.
+### Business Hours Enforcement
 
-### 3. Organizational Units
+The approver enforces UK business hours (London timezone):
+- Requests outside business hours are delayed to the next processing window via SQS
+- Requests in the final 2 hours (5-7pm London) receive a `+2` scoring penalty
+- A 30-minute EventBridge Scheduler polls the queue for delayed requests
 
-**CDDO-Specific OUs:**
-- **Entry OU:** `ou-2laj-2by9v0sr` (new accounts land here)
-- **Ready OU:** `ou-2laj-oihxgbtr` (post-cleanup, available for leases)
+### Slack-Based Operations
 
-### 4. Billing View
+Manual lease approval/denial is handled via Slack rather than the ISB web console:
+- Amazon Q Developer (Chatbot) integration with configurable Slack workspace and channel
+- Custom actions with "Approve" and "Deny" buttons on notification messages
+- Dedicated Lambda functions for each action (`ApproverSlackApprove`, `ApproverSlackDeny`)
+- CloudWatch dashboard for Slack action monitoring
 
-**Custom Billing View ARN:** `arn:aws:billing::955063685555:billingview/custom-466e2613-e09b-4787-a93a-736f0fb1564b`
+### Billing Data Isolation
 
-**Purpose:** Aggregate costs for all pool accounts for cross-government chargeback
+The billing separator addresses a UK government requirement for clean billing attribution between successive sandbox leaseholders:
+- 91-day quarantine period ensures all residual CUR data has been finalized
+- Bypass mechanism via `do-not-separate` AWS Organizations tag for emergency recycling
+- Custom billing view (ARN: `arn:aws:billing::955063685555:billingview/custom-...`) aggregates costs across all pool accounts
 
-### 5. Training Integration
+### Console State Cleanup
 
-**Use Case:** Support for October-December 2025 tech certification program
-
-**Features:**
-- 200+ free learning pathways for civil/public servants
-- AWS exam vouchers with 4-month validity
-- Sandbox accounts for hands-on training
-
-**Reference:** https://cddo.blog.gov.uk/2025/10/01/ready-to-grow-your-digital-skills-get-tech-certified-this-autumn/
-
----
-
-## Deployment Configuration
-
-### Environment Setup
-
-**CDDO .env File:**
-
-```bash
-# Common
-HUB_ACCOUNT_ID=955063685555        # InnovationSandboxHub account
-NAMESPACE="ndx"                     # Stack namespace
-
-# Account Pool Stack
-PARENT_OU_ID="ou-2laj-abcdef1234"  # Organization root OU
-AWS_REGIONS="us-west-2"             # Primary region only
-
-# IDC Stack
-IDENTITY_STORE_ID="d-0000000000"
-SSO_INSTANCE_ARN="arn:aws:sso:::instance/ssoins-xxxxx"
-ADMIN_GROUP_NAME="ndx_IsbAdmins"
-MANAGER_GROUP_NAME="ndx_IsbManagers"
-USER_GROUP_NAME="ndx_IsbUsers"
-
-# Compute Stack
-ORG_MGT_ACCOUNT_ID=123456789012     # orgManagement account
-IDC_ACCOUNT_ID=955063685555         # Same as hub
-ACCEPT_SOLUTION_TERMS_OF_USE="Accept"
-```
-
-**Key Differences from Upstream:**
-- **Namespace:** `ndx` instead of default `myisb`
-- **Single region:** `us-west-2` only (upstream supports multi-region)
-- **Group names:** `ndx_Isb*` prefix for UK organization
+The `clean_console_state.py` utility addresses an upstream limitation: AWS Nuke cannot clean AWS Management Console preferences (recently visited services, favorites, theme) because they are stored in the Console Control Service (CCS) -- an undocumented internal AWS service outside the account resource plane. The script calls the CCS `UpdateCallerSettings` and `DeleteCallerDashboard` APIs directly.
 
 ---
 
 ## Integration Architecture
 
-### Event-Driven Integration
+### Event Flow Summary
 
 ```mermaid
-graph TB
-    subgraph "ISB Core (Upstream)"
-        API[API Gateway]
-        LAMBDA[Core Lambdas]
-        DDB[DynamoDB]
-        EB[ISBEventBus]
+graph LR
+    subgraph "ISB Core Events"
+        E1[LeaseRequested]
+        E2[LeaseApproved]
+        E3[LeaseTerminated]
+        E4[AccountCleanupSucceeded]
+        E5[MoveAccount<br/>CloudTrail]
     end
 
-    subgraph "CDDO Extensions"
-        COSTS[Costs Satellite]
-        DEPLOYER[Deployer Satellite]
-        APPROVER[Approver Satellite]
+    subgraph "Satellite Consumers"
+        A[Approver]
+        D[Deployer]
+        C[Costs]
+        B[Billing Separator]
     end
 
-    subgraph "External Systems"
-        GH[GitHub<br/>ndx_try_aws_scenarios]
-        CE[Cost Explorer<br/>orgManagement]
-        BILLING[Billing View]
+    subgraph "Satellite Events"
+        SE1[LeaseCostsGenerated]
+        SE2[DeploymentSucceeded]
+        SE3[DeploymentFailed]
     end
 
-    API --> LAMBDA
-    LAMBDA --> DDB
-    LAMBDA --> EB
+    E1 --> A
+    E4 --> A
+    E2 --> D
+    E3 --> C
+    E5 --> B
 
-    EB -->|LeaseTerminated| COSTS
-    EB -->|LeaseApproved| DEPLOYER
-    EB -->|LeaseCreated| APPROVER
-
-    COSTS -->|Fetch costs| CE
-    COSTS -->|Publish| EB
-    DEPLOYER -->|Fetch scenarios| GH
-    DEPLOYER -->|Publish| EB
-    APPROVER -->|Publish| EB
-
-    COSTS -.->|Update| BILLING
+    C --> SE1
+    D --> SE2
+    D --> SE3
 ```
 
-**Event Flow:**
+### Cross-Service Dependencies
 
-1. **Lease Created:** ISB Core → Approver (risk scoring)
-2. **Lease Approved:** ISB Core → Deployer (CloudFormation deployment)
-3. **Lease Terminated:** ISB Core → Costs (cost collection after 24h)
-4. **Costs Generated:** Costs → Billing View (aggregation)
+| Satellite | Depends On | ISB API Endpoints Used | EventBridge Events Consumed | EventBridge Events Produced |
+|-----------|-----------|------------------------|---------------------------|---------------------------|
+| Approver | ISB Client v2.0.1, Bedrock, ukps-domains S3 | `GET /leases/{id}`, `GET /accounts`, `POST /leases/{id}/review` | `LeaseRequested`, `AccountCleanupSucceeded` | -- |
+| Billing Separator | ISB Commons (git submodule) | -- (uses DynamoDB directly) | CloudTrail `MoveAccount` | -- |
+| Costs | ISB Client v2.0.0 | `GET /leases/{id}` | `LeaseTerminated` (via Scheduler) | `LeaseCostsGenerated` |
+| Deployer | ISB Client v2.0.0, GitHub API | `GET /leases/{id}` (via DynamoDB direct) | `LeaseApproved` | `DeploymentSucceeded`, `DeploymentFailed` |
+| Utils | ISB API (direct HTTP) | `POST /accounts`, `GET /leaseTemplates`, `POST /leases`, `POST /leases/{id}/terminate` | -- | -- |
 
 ---
 
-## Comparison Table
+## Comparison Summary
 
-| Aspect | Upstream AWS Solution | CDDO Fork |
-|--------|----------------------|-----------|
-| **Version** | v1.1.7 | v1.1.4 (3 releases behind) |
+| Aspect | Upstream AWS Solution | CDDO Fork + Satellites |
+|--------|----------------------|------------------------|
+| **Version** | v1.2.0 | v1.1.4 (core) |
 | **Core Code Changes** | N/A | None (clean fork) |
-| **Extensions** | None | 4 satellites (Costs, Deployer, Approver, Utils) |
-| **Primary Region** | Configurable | `us-west-2` |
-| **Max Budget** | $5000 | $50 (100x lower) |
-| **Email Domain** | Example domains | `@dsit.gov.uk` |
+| **Extension Services** | None | 6 satellites |
+| **Lease Approval** | Manual (web UI) | Automated (19-rule scoring + Slack escalation) |
+| **Cost Tracking** | None | Automated CSV reports with presigned URLs |
+| **Scenario Deployment** | Manual | Automated (CFn + CDK from GitHub) |
+| **Billing Isolation** | None | 91-day quarantine |
+| **API Client** | None | Shared `@co-cddo/isb-client` library |
+| **Admin Tooling** | Web UI only | Web UI + 6 Python CLI scripts |
+| **Console Cleanup** | aws-nuke only | aws-nuke + CCS API cleanup |
+| **Max Budget** | $5,000 | $50 |
 | **Namespace** | `myisb` | `ndx` |
-| **Billing Integration** | None | Custom billing view |
-| **Cost Collection** | Manual | Automated (24h delay) |
-| **Template Deployment** | Manual | Automated (EventBridge-driven) |
-| **CDK Support** | No | Yes (deployer satellite) |
-| **Account Provisioning** | Manual | Semi-automated (Python script) |
+| **Email Domain** | Configurable | `@dsit.gov.uk` |
+| **Regions** | Configurable | `us-east-1`, `us-west-2` only |
+| **AI Integration** | None | Amazon Bedrock (email pattern analysis) |
+| **Chat Integration** | None | Slack via Amazon Q Developer |
 
 ---
 
 ## Upgrade Path
 
-### Recommended Upgrade Strategy
+### Recommended Strategy
 
-**Goal:** Upgrade CDDO fork from v1.1.4 → v1.1.7
+The clean fork pattern means upgrading is straightforward:
 
-**Steps:**
+1. **Fetch upstream changes**: `git fetch upstream && git merge upstream/main`
+2. **Resolve conflicts**: Expect conflicts only in configuration files (`.env`, `global-config.yaml`) -- use CDDO values
+3. **Test**: `npm ci && npm run build && npm test`
+4. **Validate satellite compatibility**: Verify ISB API response schemas and EventBridge event schemas have not changed
+5. **Deploy**: Enable maintenance mode, deploy upgraded stacks, smoke test, disable maintenance mode
 
-1. **Review Upstream Changelog**
-   - Read `CHANGELOG.md` for v1.1.5, v1.1.6, v1.1.7
-   - Identify breaking changes (none expected)
+**Risk assessment**: Low for v1.1.5-v1.1.8 (security patches). Medium for v1.2.0 (major release with 50K+ line changes that may alter event schemas or API contracts used by satellites).
 
-2. **Pull Upstream Changes**
-   ```bash
-   cd repos/innovation-sandbox-on-aws
-   git remote add upstream https://github.com/aws-solutions/innovation-sandbox-on-aws.git
-   git fetch upstream
-   git merge upstream/main
-   ```
-
-3. **Resolve Conflicts (if any)**
-   - Expect conflicts in `.env` (use CDDO version)
-   - Expect conflicts in `global-config.yaml` (use CDDO version)
-
-4. **Test Locally**
-   - `npm ci`
-   - `npm run build`
-   - `npm test`
-
-5. **Deploy to Test Environment**
-   - `npm run deploy:all`
-   - Verify existing leases unaffected
-   - Test new lease creation
-
-6. **Upgrade Satellite Services**
-   - Update Costs satellite to use new event schemas (if changed)
-   - Update Deployer to use new API endpoints (if changed)
-
-7. **Deploy to Production**
-   - Enable maintenance mode
-   - Deploy upgraded stacks
-   - Smoke test
-   - Disable maintenance mode
-
-**Risk Assessment:** **Low** (no code divergence, only version lag)
-
-**Estimated Effort:** 2-4 hours (including testing)
-
----
-
-## Future Customization Recommendations
-
-### 1. UK Data Sovereignty
-
-**Requirement:** Move to `eu-west-2` (London) region for production
-
-**Changes:**
-- Update `AWS_REGIONS` in `.env` to `eu-west-2`
-- Migrate S3 buckets and DynamoDB tables
-- Update CloudFront distribution origin
-
-### 2. GDS Design System
-
-**Requirement:** Replace AWS Cloudscape with UK GOV.UK Design System
-
-**Changes:**
-- Replace `@cloudscape-design/components` with `govuk-frontend`
-- Update frontend components to use GOV.UK styles
-- Maintain accessibility (WCAG 2.1 AA)
-
-### 3. Enhanced Cost Tracking
-
-**Requirement:** Tag-based cost allocation by department
-
-**Changes:**
-- Add `department` field to lease template
-- Auto-tag all resources with `Department:{value}` tag
-- Query Cost Explorer by tag for departmental reports
-
-### 4. Multi-Tenancy
-
-**Requirement:** Separate pools for different government departments
-
-**Changes:**
-- Add `tenantId` field to leases and accounts
-- Implement tenant-level quotas and budgets
-- Isolate UI views by tenant (row-level security)
-
-### 5. Integration with GDS Common Platform
-
-**Requirement:** Integrate with GDS Notify for email notifications
-
-**Changes:**
-- Replace AWS SES with GDS Notify API
-- Update email templates to use GOV.UK branding
-- Add SMS notifications for critical events
-
----
-
-## Security & Compliance
-
-### UK Government Security Classifications
-
-**Current:** OFFICIAL (public sector unclassified data)
-
-**Future Considerations:**
-- **OFFICIAL-SENSITIVE:** Enhanced encryption, audit logging
-- **SECRET:** Dedicated AWS account, PrivateLink, on-premises HSM
-
-### GDPR Compliance
-
-**Personal Data Processing:**
-- User emails stored in DynamoDB (encrypted at rest)
-- CloudWatch logs may contain PII (email addresses)
-- Retention: 30 days (lease TTL) + 90 days (CloudWatch logs)
-
-**Data Subject Rights:**
-- Right to access: Export user's leases via API
-- Right to deletion: Anonymize user email after 30 days
-
-### Audit Trail
-
-**Requirements:**
-- CloudTrail enabled (all API calls logged)
-- DynamoDB Streams to S3 (lease state changes)
-- Searchable audit log (Athena queries on S3)
-
----
-
-## Cost Analysis
-
-### CDDO Fork Additional Costs
-
-| Component | Monthly Cost (1000 leases/month) |
-|-----------|----------------------------------|
-| **Costs Satellite** | £15.00 |
-| - EventBridge Scheduler | £2.00 (1000 schedules) |
-| - Lambda (cost collection) | £5.00 (1000 invocations × 30s) |
-| - S3 (CSV storage) | £5.00 (100 GB × 3 years) |
-| - Cost Explorer API | £3.00 (1000 queries) |
-| **Deployer Satellite** | £25.00 |
-| - Lambda (CDK synthesis) | £20.00 (1000 invocations × 5min × 3GB) |
-| - GitHub API calls | £0.00 (free tier) |
-| - CloudFormation | £5.00 (1000 stacks) |
-| **Approver Satellite** | £20.00 (estimated) |
-| **Utils** | £0.00 (manual script, no infrastructure) |
-| **Total Additional Costs** | **£60.00/month** |
-
-**Baseline ISB Core Cost:** $65.25/month (£50/month)
-
-**Total CDDO Fork Cost:** **£110/month** (baseline + extensions)
-
-**Per-Lease Cost:** £0.11 (CDDO extensions only)
-
----
-
-## Monitoring & Observability
-
-### CloudWatch Dashboards
-
-**CDDO Custom Dashboards:**
-
-1. **Cost Collection Dashboard**
-   - Scheduler executions (success/failure)
-   - Cost Explorer API latency
-   - S3 upload success rate
-   - Presigned URL generation errors
-
-2. **Deployer Dashboard**
-   - Deployment success rate (by scenario type)
-   - CDK synthesis duration
-   - CloudFormation stack creation time
-   - GitHub API rate limit usage
-
-3. **Cross-Government Metrics**
-   - Leases by department
-   - Budget consumption by department
-   - Compliance rate (clean account returns)
-
-### Alarms
-
-**Critical Alarms:**
-- Cost collection failure rate > 5% (5min, 2 datapoints)
-- Deployer timeout > 10% (5min, 3 datapoints)
-- Billing view update failure (immediate)
-
----
-
-## Documentation & Training
-
-### CDDO-Specific Documentation
-
-**Required Documentation:**
-1. **Onboarding Guide** for civil servants (how to request a lease)
-2. **Manager Guide** (approval workflow, monitoring)
-3. **Admin Guide** (pool management, troubleshooting)
-4. **Scenario Development Guide** (creating CloudFormation/CDK scenarios)
-
-**Training Materials:**
-1. **Video Tutorial:** Requesting and using a sandbox account
-2. **Workshop:** Building AWS scenarios for training
-3. **FAQ:** Common issues and resolutions
+**Estimated effort**: 2-4 hours for v1.1.7, 1-2 days for v1.2.0 (including satellite service validation).
 
 ---
 
 ## References
 
-- **Upstream Repository:** https://github.com/aws-solutions/innovation-sandbox-on-aws
-- **CDDO Fork:** https://github.com/co-cddo/innovation-sandbox-on-aws
-- **Costs Satellite:** https://github.com/co-cddo/innovation-sandbox-on-aws-costs
-- **Deployer Satellite:** https://github.com/co-cddo/innovation-sandbox-on-aws-deployer
-- **Utils:** https://github.com/co-cddo/innovation-sandbox-on-aws-utils
-- **CDDO Blog:** https://cddo.blog.gov.uk/
-- **Upstream Analysis Doc:** [01-upstream-analysis.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/01-upstream-analysis.md)
-- **ISB Core Doc:** [10-isb-core-architecture.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/10-isb-core-architecture.md)
-
----
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Production System (CDDO Fork Analysis)
+- [ISB Core Architecture](./10-isb-core-architecture.md) -- CDK stacks, Lambda catalog, API endpoints, EventBridge events
+- [Lease Lifecycle](./11-lease-lifecycle.md) -- State machine, account OU transitions, cleanup workflow
+- [ISB Frontend](./12-isb-frontend.md) -- React UI, authentication flow, CloudFront hosting
+- [Upstream Repository](https://github.com/aws-solutions/innovation-sandbox-on-aws)
+- [CDDO Fork](https://github.com/co-cddo/innovation-sandbox-on-aws)
+- [ISB Client](https://github.com/co-cddo/innovation-sandbox-on-aws-client)
+- [Approver](https://github.com/co-cddo/innovation-sandbox-on-aws-approver)
+- [Billing Separator](https://github.com/co-cddo/innovation-sandbox-on-aws-billing-seperator)
+- [Costs](https://github.com/co-cddo/innovation-sandbox-on-aws-costs)
+- [Deployer](https://github.com/co-cddo/innovation-sandbox-on-aws-deployer)
+- [Utils](https://github.com/co-cddo/innovation-sandbox-on-aws-utils)

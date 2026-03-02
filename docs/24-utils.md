@@ -1,765 +1,231 @@
-# ISB Utils - Account Pool Provisioning
+# ISB Utils
+
+> **Last Updated**: 2026-03-02
+> **Source**: [innovation-sandbox-on-aws-utils](https://github.com/co-cddo/innovation-sandbox-on-aws-utils)
+> **Captured SHA**: `aa7e781`
 
 ## Executive Summary
 
-The Innovation Sandbox Utils (`innovation-sandbox-on-aws-utils`) repository contains a Python script for semi-automated provisioning of pool accounts. This manual tool streamlines the multi-step process of creating, configuring, and registering AWS accounts into the Innovation Sandbox pool.
+The ISB Utils repository is a collection of Python CLI scripts for manual operational management of the Innovation Sandbox account pool and lease lifecycle. These tools automate multi-step AWS workflows that span Organizations, Identity Center, the ISB API, and the billing separator, providing operators with reliable scripts for pool capacity expansion, lease management, account recovery, and console state cleanup. All scripts authenticate via AWS SSO profiles and communicate with the ISB API using self-signed JWTs.
 
-**Key Tool:** `create_sandbox_pool_account.py`
+## Tool Inventory
 
-**Purpose:** Automate the 7-step workflow for adding new accounts to the sandbox pool
+The repository contains six standalone Python scripts, each addressing a specific operational workflow:
 
-**Use Case:** Capacity expansion when pool runs low
+| Script | Purpose | Key APIs Used |
+|--------|---------|---------------|
+| `create_sandbox_pool_account.py` | Create and register new pool accounts | Organizations, Billing, ISB Lambda |
+| `assign_lease.py` | Assign a lease from a template for a user | ISB API (JWT auth) |
+| `terminate_lease.py` | Terminate all active leases for a user | ISB API (JWT auth) |
+| `force_release_account.py` | Force-release quarantined accounts | Organizations, ISB API |
+| `create_user.py` | Create Identity Center users and add to ISB group | Identity Store |
+| `clean_console_state.py` | Reset AWS Console state on recycled accounts | SSO Admin, CCS API |
 
-**Technology:** Python 3, boto3, AWS Organizations, AWS SSO
+### Operational Workflow Overview
 
-**Status:** Production utility (manual execution)
+```mermaid
+graph TB
+    subgraph "Pool Capacity Management"
+        CREATE[create_sandbox_pool_account.py]
+        FORCE[force_release_account.py]
+    end
 
----
+    subgraph "Lease Lifecycle"
+        ASSIGN[assign_lease.py]
+        TERMINATE[terminate_lease.py]
+    end
 
-## Tool Overview
+    subgraph "User Management"
+        USER[create_user.py]
+    end
 
-### create_sandbox_pool_account.py
+    subgraph "Account Maintenance"
+        CLEAN[clean_console_state.py]
+    end
 
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-utils/create_sandbox_pool_account.py`
+    subgraph "AWS Services"
+        ORGS[AWS Organizations]
+        IDC[Identity Center]
+        ISB_API[ISB API Gateway]
+        BILLING[AWS Billing API]
+        CCS[Console Control Service]
+    end
 
-**Purpose:** Create and register a new pool account with automated naming, OU placement, billing setup, and ISB registration.
+    CREATE -->|CreateAccount, MoveAccount| ORGS
+    CREATE -->|Add to Billing View| BILLING
+    CREATE -->|Register Account| ISB_API
 
-**Workflow:**
+    FORCE -->|Tag + Move Account| ORGS
+    FORCE -->|Re-register| ISB_API
+
+    ASSIGN -->|Create Lease| ISB_API
+    TERMINATE -->|Delete Lease| ISB_API
+
+    USER -->|CreateUser, AddToGroup| IDC
+
+    CLEAN -->|Assign/Remove PermissionSet| IDC
+    CLEAN -->|Reset Console State| CCS
+```
+
+## create_sandbox_pool_account.py
+
+The primary pool provisioning tool. Automates a 7-step workflow for adding new AWS accounts to the Innovation Sandbox pool.
+
+**Source**: `create_sandbox_pool_account.py` (28,999 bytes)
+
+### Workflow
 
 ```mermaid
 graph TD
-    START[Start Script] --> SSO[1. Validate AWS SSO Sessions]
-    SSO --> LIST[2. List Existing pool-NNN Accounts]
-    LIST --> NUMBER[3. Determine Next Number]
-    NUMBER --> CREATE[4. Create Account via Organizations]
-    CREATE --> MOVE[5. Move to Entry OU]
-    MOVE --> BILLING[6. Add to Billing View]
-    BILLING --> REGISTER[7. Invoke ISB Lambda for Registration]
-    REGISTER --> WAIT[8. Wait for ISB Cleanup]
-    WAIT --> READY{Account in Ready OU?}
-    READY -->|Yes| COMPLETE[9. Report Completion]
-    READY -->|No, timeout| TIMEOUT[10. Timeout Error]
-    COMPLETE --> END[End]
-    TIMEOUT --> END
+    START[Start] --> SSO[1. Validate SSO Sessions<br/>NDX/orgManagement + NDX/InnovationSandboxHub]
+    SSO --> LIST[2. List Existing pool-NNN Accounts<br/>via Organizations paginator]
+    LIST --> NUMBER[3. Determine Next Number<br/>pool-009 etc.]
+    NUMBER --> CREATE[4. Create Account<br/>Organizations CreateAccount API]
+    CREATE --> MOVE[5. Move to Entry OU<br/>ou-2laj-2by9v0sr]
+    MOVE --> BILLING[5.5. Add to Billing View<br/>Read-Modify-Write pattern]
+    BILLING --> REGISTER[6. Register with ISB<br/>ISB API via JWT auth]
+    REGISTER --> WAIT[7. Wait for ISB Cleanup<br/>Poll OU every 5s, 1hr timeout]
+    WAIT -->|In Ready OU| DONE[Complete]
+    WAIT -->|Timeout| FAIL[Timeout Error]
 ```
 
----
-
-## Prerequisites
-
-### AWS SSO Profiles
-
-**Required Profiles:**
-
-1. **NDX/orgManagement**
-   - Access to AWS Organizations API
-   - Permissions: `organizations:CreateAccount`, `organizations:MoveAccount`
-
-2. **NDX/InnovationSandboxHub**
-   - Access to ISB Lambda functions
-   - Permissions: `lambda:InvokeFunction`
-
-**Configuration:** `~/.aws/config`
-
-```ini
-[profile NDX/orgManagement]
-sso_start_url = https://ndx.awsapps.com/start
-sso_region = us-east-1
-sso_account_id = 123456789012
-sso_role_name = OrganizationAccountAccessRole
-region = us-east-1
-
-[profile NDX/InnovationSandboxHub]
-sso_start_url = https://ndx.awsapps.com/start
-sso_region = us-east-1
-sso_account_id = 955063685555
-sso_role_name = InnovationSandboxAdminRole
-region = us-west-2
-```
-
-### Python Environment
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install boto3
-```
-
----
-
-## Usage
-
-### Create New Account
-
-```bash
-source venv/bin/activate
-python create_sandbox_pool_account.py
-```
-
-**Output:**
-```
-============================================================
-🔑 STEP 1: AWS SSO Authentication
-============================================================
-  ✅ NDX/orgManagement - session valid
-  ✅ NDX/InnovationSandboxHub - session valid
-
-============================================================
-📋 STEP 2: List existing pool accounts
-============================================================
-Fetching accounts from AWS Organizations...
-
-📊 Found 8 accounts starting with 'pool-':
-
-Account ID      Name                                     Status       Email
-----------------------------------------------------------------------------------------------------
-449788867583    pool-001                                 ACTIVE       ndx-try-provider+gds-ndx-try-aws-pool-001@dsit.gov.uk
-...
-
-   Total: 8 pool accounts
-
-============================================================
-🆕 STEP 3: Create new account
-============================================================
-   Account name: pool-009
-   Email: ndx-try-provider+gds-ndx-try-aws-pool-009@dsit.gov.uk
-   Request ID: car-abc123...
-   ✅ Account created: 123456789012
-
-============================================================
-📦 STEP 4: Move to Entry OU
-============================================================
-   📍 From: r-2laj
-   📍 To:   ou-2laj-2by9v0sr
-   ✅ Move complete
-
-============================================================
-💰 STEP 4.5: Add to Billing View
-============================================================
-   📊 Fetching current billing view...
-   📝 Adding account (total will be 9 accounts)
-   ✅ Added account to billing view
-
-============================================================
-📝 STEP 5: Register with Innovation Sandbox
-============================================================
-   🎯 Account: 123456789012
-   λ  Lambda: ISB-AccountsLambdaFunction-ndx
-   ✅ Registered successfully!
-   📄 Status: CleanUp
-
-============================================================
-🧹 STEP 6: Wait for Innovation Sandbox cleanup
-============================================================
-⏳ Waiting for Innovation Sandbox cleanup...
-   Target OU: ou-2laj-oihxgbtr
-   ✅ Account moved to target OU after 8m 45s!
-
-============================================================
-🎉 COMPLETE
-============================================================
-   Account: pool-009 (123456789012)
-   ⏱️  Total time: 12m 34s
-```
-
-### Recover Partially Provisioned Account
-
-If the script fails partway through, resume by providing the account ID:
-
-```bash
-python create_sandbox_pool_account.py 123456789012
-```
-
-**Recovery Logic:**
-- **In root OU:** Moves to Entry OU, then registers
-- **In Entry OU:** Skips account creation, proceeds to registration
-- **In Ready OU:** Reports as already complete
-- **Elsewhere:** Returns error (may be in use)
-
----
-
-## Implementation Details
-
-### 1. SSO Authentication
-
-```python
-def check_sso_session(profile_name):
-    """Check if SSO session is valid for the given profile."""
-    try:
-        session = boto3.Session(profile_name=profile_name)
-        sts = session.client('sts')
-        sts.get_caller_identity()
-        return True
-    except Exception:
-        return False
-
-def ensure_sso_login(profile_name):
-    """Ensure SSO login for the given profile, only prompting if needed."""
-    if check_sso_session(profile_name):
-        print(f"  ✅ {profile_name} - session valid")
-        return
-
-    print(f"  🔐 {profile_name} - logging in...")
-    result = subprocess.run(
-        ["aws", "sso", "login", "--profile", profile_name],
-        capture_output=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"❌ SSO login failed for profile {profile_name}")
-    print(f"  ✅ {profile_name} - login successful")
-```
-
-### 2. List Existing Accounts
-
-```python
-def get_all_accounts(session):
-    """Retrieve all accounts from AWS Organizations with pagination."""
-    client = session.client('organizations')
-    accounts = []
-    paginator = client.get_paginator('list_accounts')
-
-    for page in paginator.paginate():
-        accounts.extend(page['Accounts'])
-
-    return accounts
-
-def get_next_pool_number(pool_accounts):
-    """Find the highest pool number and return the next one."""
-    max_number = 0
-    pattern = re.compile(r'^pool-(\d{3})$')
-
-    for acc in pool_accounts:
-        match = pattern.match(acc['Name'])
-        if match:
-            number = int(match.group(1))
-            if number > max_number:
-                max_number = number
-
-    return max_number + 1
-```
-
-### 3. Create Account
-
-```python
-def create_pool_account(session, account_name, email):
-    """Create a new AWS account in the organization."""
-    client = session.client('organizations')
-
-    response = client.create_account(
-        Email=email,
-        AccountName=account_name,
-    )
-
-    request_id = response['CreateAccountStatus']['Id']
-    print(f"   Request ID: {request_id}")
-
-    # Poll for completion
-    while True:
-        status_response = client.describe_create_account_status(
-            CreateAccountRequestId=request_id
-        )
-        status = status_response['CreateAccountStatus']
-
-        if status['State'] == 'SUCCEEDED':
-            print(f"\r   ✅ Account created: {status['AccountId']}{' ' * 20}")
-            return status['AccountId']
-        elif status['State'] == 'FAILED':
-            print(f"\r   ❌ Failed: {status.get('FailureReason', 'Unknown')}{' ' * 20}")
-            return None
-        else:
-            print(f"\r   ⏳ {status['State']}...", end="", flush=True)
-            time.sleep(5)
-```
-
-**Account Naming Convention:**
-- Pattern: `pool-NNN` (zero-padded 3 digits)
-- Examples: `pool-001`, `pool-009`, `pool-123`
-
-**Email Pattern:**
-- Format: `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk`
-- Uses Gmail-style `+` addressing for unique emails
-
-### 4. Move to Entry OU
-
-```python
-ENTRY_OU = "ou-2laj-2by9v0sr"  # Entry OU for new accounts
-ROOT_ID = None  # Populated at runtime
-
-def move_account_to_ou(session, account_id, destination_ou_id, source_parent_id=None):
-    """Move an account to a specific OU."""
-    client = session.client('organizations')
-
-    # If source not provided, get current parent
-    if source_parent_id is None:
-        source_parent_id = get_account_ou(session, account_id)
-
-    print(f"   📍 From: {source_parent_id}")
-    print(f"   📍 To:   {destination_ou_id}")
-
-    client.move_account(
-        AccountId=account_id,
-        SourceParentId=source_parent_id,
-        DestinationParentId=destination_ou_id,
-    )
-
-    print(f"   ✅ Move complete")
-
-def get_account_ou(session, account_id):
-    """Get the OU that an account is currently in."""
-    client = session.client('organizations')
-    response = client.list_parents(ChildId=account_id)
-    if response['Parents']:
-        return response['Parents'][0]['Id']
-    return None
-```
-
-**OU Structure:**
-- **Root:** `r-2laj` (organization root)
-- **Entry OU:** `ou-2laj-2by9v0sr` (for registration)
-- **Ready OU:** `ou-2laj-oihxgbtr` (post-cleanup, available for leases)
-
-### 5. Add to Billing View
-
-```python
-BILLING_VIEW_ARN = "arn:aws:billing::955063685555:billingview/custom-466e2613-e09b-4787-a93a-736f0fb1564b"
-
-def add_account_to_billing_view(session, account_id):
-    """Add an account to the custom billing view.
-
-    Uses read-modify-write pattern since there's no incremental add API.
-    Continues with warning on failure (non-blocking).
-    """
-    try:
-        billing_client = session.client('billing')
-
-        # Get current billing view
-        print(f"   📊 Fetching current billing view...")
-        response = billing_client.get_billing_view(arn=BILLING_VIEW_ARN)
-        billing_view = response['billingView']
-
-        # Get existing accounts from the filter expression
-        data_filter = billing_view.get('dataFilterExpression', {})
-        dimensions = data_filter.get('dimensions', {})
-        existing_accounts = dimensions.get('values', [])
-
-        # Check if account already exists
-        if account_id in existing_accounts:
-            print(f"   ℹ️  Account {account_id} already in billing view")
-            return True
-
-        # Add new account
-        updated_accounts = existing_accounts + [account_id]
-        print(f"   📝 Adding account (total will be {len(updated_accounts)} accounts)")
-
-        # Update billing view
-        billing_client.update_billing_view(
-            arn=BILLING_VIEW_ARN,
-            dataFilterExpression={
-                'dimensions': {
-                    'key': 'LINKED_ACCOUNT',
-                    'values': updated_accounts
-                }
-            }
-        )
-
-        print(f"   ✅ Added account to billing view")
-        return True
-
-    except Exception as e:
-        print(f"   ⚠️  Warning: Failed to add to billing view: {e}")
-        print(f"   ℹ️  Continuing anyway (non-blocking)")
-        return False
-```
-
-### 6. Register with ISB Lambda
-
-```python
-def create_mock_jwt():
-    """Create a mock JWT token for direct Lambda invocation.
-
-    The Lambda only decodes the JWT (doesn't verify signature), so we can
-    create an unsigned token with the required user structure.
-    """
-    header = {"alg": "none", "typ": "JWT"}
-    payload = {
-        "user": {
-            "email": "admin@innovation-sandbox.local",
-            "roles": ["Admin"],
-        }
-    }
-
-    def b64_encode(data):
-        return base64.urlsafe_b64encode(
-            json.dumps(data).encode()
-        ).rstrip(b'=').decode()
-
-    return f"{b64_encode(header)}.{b64_encode(payload)}."
-
-def register_account_with_isb(session, account_id):
-    """Register account with Innovation Sandbox via Lambda invocation."""
-    lambda_client = session.client('lambda')
-
-    # Create mock JWT for authentication
-    jwt_token = create_mock_jwt()
-
-    # Invoke Lambda
-    payload = {
-        "requestContext": {
-            "http": {"method": "POST", "path": "/accounts"}
-        },
-        "headers": {
-            "authorization": f"Bearer {jwt_token}"
-        },
-        "body": json.dumps({
-            "awsAccountId": account_id
-        })
-    }
-
-    print(f"   🎯 Account: {account_id}")
-    print(f"   λ  Lambda: ISB-AccountsLambdaFunction-ndx")
-
-    response = lambda_client.invoke(
-        FunctionName='ISB-AccountsLambdaFunction-ndx',
-        InvocationType='RequestResponse',
-        Payload=json.dumps(payload)
-    )
-
-    result = json.loads(response['Payload'].read())
-
-    if result.get('statusCode') == 200:
-        print(f"   ✅ Registered successfully!")
-        body = json.loads(result['body'])
-        print(f"   📄 Status: {body['data']['accountStatus']}")
-        return True
-    else:
-        print(f"   ❌ Registration failed: {result.get('body')}")
-        return False
-```
-
-**JWT Bypass:**
-- ISB API Gateway Authorizer only decodes JWT (doesn't verify signature)
-- Script creates unsigned JWT with Admin role
-- Allows direct Lambda invocation without CloudFront authentication
-
-### 7. Wait for ISB Cleanup
-
-```python
-SANDBOX_READY_OU = "ou-2laj-oihxgbtr"
-
-def wait_for_cleanup(session, account_id, max_wait=3600, check_interval=5):
-    """Wait for Innovation Sandbox to move account to Ready OU."""
-    print(f"⏳ Waiting for Innovation Sandbox cleanup...")
-    print(f"   Target OU: {SANDBOX_READY_OU}")
-
-    start_time = time.time()
-
-    while True:
-        current_ou = get_account_ou(session, account_id)
-
-        if current_ou == SANDBOX_READY_OU:
-            elapsed = int(time.time() - start_time)
-            elapsed_str = format_duration(elapsed)
-            print(f"\r   ✅ Account moved to target OU after {elapsed_str}!{' ' * 20}")
-            return True
-
-        elapsed = int(time.time() - start_time)
-        if elapsed > max_wait:
-            print(f"\r   ❌ Timeout after {format_duration(elapsed)}{' ' * 20}")
-            return False
-
-        elapsed_str = format_duration(elapsed)
-        print(f"\r   ⏳ Current OU: {current_ou} (elapsed: {elapsed_str})", end="", flush=True)
-        time.sleep(check_interval)
-
-def format_duration(seconds):
-    """Format seconds as human-readable duration."""
-    minutes = seconds // 60
-    secs = seconds % 60
-    if minutes == 0:
-        return f"{secs}s"
-    else:
-        return f"{minutes}m {secs}s"
-```
-
-**Typical Cleanup Duration:** 8-12 minutes
-
-**ISB Cleanup Steps (Automatic):**
-1. Account nuke (delete all resources)
-2. Verification (check account is clean)
-3. Move to Ready OU
-
----
+### Key Implementation Details
+
+- **Account naming**: Pattern `pool-NNN` (zero-padded 3 digits), determined by scanning existing accounts
+- **Email pattern**: `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk` (Gmail-style `+` addressing)
+- **OU structure**: Root (`r-2laj`) -> Entry OU (`ou-2laj-2by9v0sr`) -> Ready OU (`ou-2laj-oihxgbtr`) after ISB cleanup
+- **Billing view**: Uses read-modify-write pattern on custom billing view (`arn:aws:billing::955063685555:billingview/custom-466e2613-...`)
+- **ISB registration**: Calls ISB API Gateway with self-signed JWT (Admin role)
+- **Recovery**: Can resume from any step by providing account ID as argument
+- **Cleanup wait**: Polls account OU every 5 seconds, typical duration 8-12 minutes, 1-hour timeout
+
+## assign_lease.py
+
+Assigns a lease from a named ISB template for a specified user (or the current SSO identity).
+
+**Source**: `assign_lease.py` (18,608 bytes)
+
+- Authenticates via SSO profiles (NDX/orgManagement for identity, NDX/InnovationSandboxHub for secrets)
+- Retrieves JWT signing secret from Secrets Manager
+- Constructs signed JWT with user identity
+- Calls ISB API `POST /leases` with template name
+- Monitors lease until it reaches Active or terminal state
+- Tracks active leases across statuses: Active, Frozen, Provisioning, PendingApproval
+
+## terminate_lease.py
+
+Terminates all active leases for a user.
+
+**Source**: `terminate_lease.py` (12,386 bytes)
+
+- Lists all leases for the target user via ISB API
+- Filters for active statuses (Active, Frozen, Provisioning, PendingApproval)
+- Calls ISB API `DELETE /leases/{leaseId}` for each active lease
+- Confirms termination with status polling
+
+## force_release_account.py
+
+Force-releases quarantined accounts from the billing separator's 91-day hold, bypassing the normal quarantine period.
+
+**Source**: `force_release_account.py` (11,044 bytes)
+
+- Accepts specific account IDs or `--all` flag for bulk operation
+- Tags each account with `do-not-separate` (billing separator bypass tag)
+- Moves accounts from Quarantine OU to Entry OU
+- Re-registers with ISB API to trigger a cleanup cycle
+- The billing separator respects the `do-not-separate` tag and skips quarantine on the next cycle
+
+This tool is the operational complement to the billing separator's bypass tag feature documented in [21-billing-separator.md](./21-billing-separator.md).
+
+## create_user.py
+
+Creates a user in AWS Identity Center and adds them to the ISB users group.
+
+**Source**: `create_user.py` (6,997 bytes)
+
+- Uses NDX/orgManagement profile for Identity Store API access
+- Discovers the Identity Store ID from SSO Admin
+- Creates user with provided email and name
+- Adds user to `ndx_IsbUsersGroup` for ISB access
+- Handles existing user detection
+
+## clean_console_state.py
+
+Resets AWS Management Console state (recently visited services, favorites, dashboard, theme, locale) on recycled sandbox accounts. This state persists across account recycling because it is stored by the Console Control Service (CCS), an undocumented internal AWS service that stores per-principal user preference data outside the account's resource plane.
+
+**Source**: `clean_console_state.py` (31,796 bytes)
+
+### Approach
+
+1. Discovers sandbox accounts from the AWS Organizations OU structure
+2. Temporarily assigns the current user's SSO principal to each ISB permission set
+3. Obtains SSO role credentials for each permission set assignment
+4. Calls CCS APIs (undocumented) to reset console state for that principal
+5. Removes the temporary permission set assignments
+
+Uses SigV4 authentication for the CCS API calls. Note that CCS state is per-caller (keyed on full assumed-role ARN including session name), so the script must be run with credentials for each user whose console state needs cleaning.
+
+## Authentication Pattern
+
+All scripts share a common authentication pattern:
+
+1. **SSO Session Validation**: Check if existing SSO session is valid via `sts:GetCallerIdentity`
+2. **SSO Login**: Prompt for login only if session is expired
+3. **JWT Construction**: For ISB API calls, retrieve the JWT signing secret from Secrets Manager and construct a signed JWT with HMAC-SHA256
+4. **API Calls**: Use the signed JWT as a Bearer token against the ISB API Gateway
+
+The ISB API base URL and JWT secret path are configured either as constants in the scripts or via environment variables (`ISB_API_BASE_URL`, `ISB_JWT_SECRET_PATH`).
+
+### Required SSO Profiles
+
+| Profile | Account | Purpose |
+|---------|---------|---------|
+| `NDX/orgManagement` | Organization Management | Organizations API, Identity Store API |
+| `NDX/InnovationSandboxHub` | Hub (955063685555) | Secrets Manager, ISB Lambda invocation |
 
 ## Configuration Constants
 
+Key constants shared across scripts:
+
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `ENTRY_OU` | `ou-2laj-2by9v0sr` | OU for new accounts |
-| `SANDBOX_READY_OU` | `ou-2laj-oihxgbtr` | OU for available accounts |
-| `ROOT_ID` | `r-2laj` (runtime) | Organization root |
-| `BILLING_VIEW_ARN` | `arn:aws:billing::955063685555:...` | Custom billing view |
-| `check_interval` | `5` seconds | Polling frequency |
-| `max_wait` | `3600` seconds (1 hour) | Timeout for cleanup |
+| SSO Start URL | `https://d-9267e1e371.awsapps.com/start` | AWS SSO portal |
+| ISB API Base URL | `https://1ewlxhaey6.execute-api.us-west-2.amazonaws.com/prod/` | ISB API Gateway |
+| JWT Secret Path | `/InnovationSandbox/ndx/Auth/JwtSecret` | Secrets Manager path |
+| Entry OU | `ou-2laj-2by9v0sr` | OU for new account registration |
+| Ready OU | `ou-2laj-oihxgbtr` | OU for available accounts post-cleanup |
+| Pool OU | `ou-2laj-4dyae1oa` | Parent sandbox OU |
+| Active OU | `ou-2laj-sre4rnjs` | OU for accounts with active leases |
+| ISB Users Group | `ndx_IsbUsersGroup` | Identity Center group for ISB access |
+| Billing View ARN | `arn:aws:billing::955063685555:billingview/custom-466e2613-...` | Custom billing view |
 
----
+## Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.x |
+| Dependencies | boto3, botocore (SigV4 for CCS) |
+| Authentication | AWS SSO via CLI profiles |
+| ISB Auth | HMAC-SHA256 signed JWTs |
+| Package Management | pip with venv |
+| Execution | Manual CLI invocation |
 
 ## Error Handling
 
-### Common Errors
-
-**1. SSO Session Expired**
-```
-❌ SSO login failed for profile NDX/orgManagement
-```
-**Solution:** Re-run `aws sso login --profile NDX/orgManagement`
-
-**2. Account Creation Failed**
-```
-❌ Failed: Email already in use
-```
-**Solution:** Check if account already exists, or use different email
-
-**3. Lambda Invocation Failed**
-```
-❌ Registration failed: {"statusCode": 500}
-```
-**Solution:** Check Lambda logs in CloudWatch, verify IAM permissions
-
-**4. Cleanup Timeout**
-```
-❌ Timeout after 1h 0m
-```
-**Solution:** Check ISB cleanup Step Function, may need manual intervention
-
-### Recovery Strategies
-
-**Partial Provisioning:**
-- Script tracks progress and can resume from any step
-- Run with account ID to skip creation: `python create_sandbox_pool_account.py 123456789012`
-
-**Manual Cleanup:**
-- If script fails, account may be in Entry OU
-- Manually delete account via AWS Organizations console
-- Or continue from where script left off
-
----
-
-## Manual vs Automated Usage
-
-### When to Use This Script
-
-**Use Case:** Pool capacity expansion
-
-**Frequency:** As needed (typically monthly)
-
-**Trigger:** CloudWatch alarm when available accounts < 5
-
-**Example Workflow:**
-```bash
-# Check current pool size
-python create_sandbox_pool_account.py --dry-run
-
-# Create 5 new accounts
-for i in {1..5}; do
-  python create_sandbox_pool_account.py
-  sleep 60  # Wait between creations to avoid rate limits
-done
-```
-
-### Comparison with Full Automation
-
-| Aspect | Manual Script | Full Automation (Future) |
-|--------|--------------|--------------------------|
-| **Trigger** | Human-initiated | CloudWatch alarm → Lambda |
-| **Approval** | Implicit (operator runs script) | Auto-approved if capacity < threshold |
-| **Error Handling** | Operator investigates | Alerts to ops team |
-| **Cost** | $0 (no infrastructure) | ~£10/month (Lambda + EventBridge) |
-| **Flexibility** | Can customize per run | Rigid policy-based |
-
-**Recommendation:** Keep manual for now (low frequency), automate if pool churn increases
-
----
-
-## Monitoring & Observability
-
-### CloudWatch Insights (Post-Script)
-
-After running script, verify account appears in ISB:
-
-```python
-# Query CloudWatch Logs for ISB Lambda execution
-aws logs filter-log-events \
-  --log-group-name /aws/lambda/ISB-AccountsLambdaFunction-ndx \
-  --filter-pattern "123456789012" \
-  --start-time $(date -u +%s)000
-```
-
-### Billing View Verification
-
-```bash
-aws billing get-billing-view \
-  --arn arn:aws:billing::955063685555:billingview/custom-466e2613-e09b-4787-a93a-736f0fb1564b \
-  --profile NDX/orgManagement \
-  --query 'billingView.dataFilterExpression.dimensions.values' \
-  --output json
-```
-
----
-
-## Future Enhancements
-
-### 1. Bulk Account Creation
-
-```bash
-# Create N accounts in parallel
-python create_sandbox_pool_account.py --count 10
-```
-
-**Implementation:**
-- ThreadPoolExecutor for parallel creation
-- Max 5 concurrent (to avoid rate limits)
-- Consolidated status reporting
-
-### 2. Lambda-Based Automation
-
-**Architecture:**
-```
-CloudWatch Alarm (capacity < 5) → SNS → Lambda → Organizations API
-```
-
-**Benefits:**
-- No manual intervention
-- Faster response time
-- Automatic retry on failure
-
-**Challenges:**
-- Error handling complexity
-- Quota management (1 account creation per 30 seconds)
-
-### 3. Configuration File
-
-**YAML Config:**
-```yaml
-account_pool:
-  naming_pattern: pool-{number:03d}
-  email_template: ndx-try-provider+gds-ndx-try-aws-pool-{number:03d}@dsit.gov.uk
-  entry_ou: ou-2laj-2by9v0sr
-  ready_ou: ou-2laj-oihxgbtr
-  billing_view_arn: arn:aws:billing::955063685555:...
-
-sso:
-  org_management_profile: NDX/orgManagement
-  isb_hub_profile: NDX/InnovationSandboxHub
-
-cleanup:
-  timeout: 3600
-  check_interval: 5
-```
-
----
+All scripts implement:
+- SSO session validation with automatic re-login prompts
+- Step-by-step progress reporting with visual indicators
+- Recovery from partial execution (e.g., `create_sandbox_pool_account.py` can resume from any step)
+- Timeout handling with configurable wait periods
+- Non-blocking failures for optional steps (e.g., billing view update)
 
 ## Security Considerations
 
-### IAM Permissions
-
-**Least Privilege:**
-- Script only creates accounts, moves to OU, and invokes Lambda
-- Cannot delete accounts or modify existing ones
-- No access to production resources
-
-**SSO Role Permissions:**
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "organizations:CreateAccount",
-        "organizations:DescribeCreateAccountStatus",
-        "organizations:ListAccounts",
-        "organizations:MoveAccount",
-        "organizations:ListParents"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": "lambda:InvokeFunction",
-      "Resource": "arn:aws:lambda:*:*:function:ISB-*"
-    }
-  ]
-}
-```
-
-### Email Security
-
-**Gmail-Style + Addressing:**
-- All emails route to single inbox: `ndx-try-provider@dsit.gov.uk`
-- `+pool-001` suffix allows filtering
-- No need to create 100+ email addresses
-
-**Risk:** If someone discovers pattern, they could create accounts with same email
-
-**Mitigation:** Email domain (`@dsit.gov.uk`) controlled by DSIT, prevents external abuse
+- **No long-lived credentials**: All access via SSO session tokens
+- **JWT signing**: Uses Secrets Manager for signing secret, constructs minimal JWTs
+- **Least privilege**: Scripts use separate SSO profiles scoped to required permissions
+- **Email security**: Pool account emails use `+` addressing to a single controlled inbox (`ndx-try-provider@dsit.gov.uk`)
+- **CCS API access**: Requires temporary permission set assignments, cleaned up after use
 
 ---
-
-## Testing Strategy
-
-### Unit Tests (Future)
-
-```python
-def test_get_next_pool_number():
-    pool_accounts = [
-        {'Name': 'pool-001', 'Id': '123'},
-        {'Name': 'pool-003', 'Id': '456'},
-    ]
-    assert get_next_pool_number(pool_accounts) == 4
-
-def test_format_duration():
-    assert format_duration(65) == "1m 5s"
-    assert format_duration(30) == "30s"
-    assert format_duration(600) == "10m 0s"
-```
-
-### Integration Tests
-
-```bash
-# Dry-run mode (simulates without creating)
-python create_sandbox_pool_account.py --dry-run
-
-# Verify SSO sessions
-python -c "from create_sandbox_pool_account import check_sso_session; assert check_sso_session('NDX/orgManagement')"
-```
-
----
-
-## Cost Analysis
-
-### Per-Account Creation Cost
-
-| Service | Cost |
-|---------|------|
-| AWS Organizations | Free |
-| Lambda Invocation (ISB) | £0.000002 |
-| Billing API Calls | Free |
-| **Total** | **~£0.00** |
-
-**Note:** Script itself is free (no infrastructure), only pays for AWS API calls
-
----
-
-## Related Documentation
-
-- [10-isb-core-architecture.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/10-isb-core-architecture.md) - ISB Core architecture
-- [13-isb-customizations.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/13-isb-customizations.md) - CDDO customizations
-
----
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Production Utility (Manual Execution)
+*Generated from source analysis of `innovation-sandbox-on-aws-utils` at SHA `aa7e781`. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory. Cross-references: [10-isb-core-architecture.md](./10-isb-core-architecture.md), [21-billing-separator.md](./21-billing-separator.md), [11-lease-lifecycle.md](./11-lease-lifecycle.md).*

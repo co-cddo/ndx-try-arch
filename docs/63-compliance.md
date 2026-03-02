@@ -1,763 +1,435 @@
-# Compliance and Security Controls
+# Compliance
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Scope:** NDX:Try AWS platform compliance alignment
-
----
+> **Last Updated**: 2026-03-02
+> **Sources**: `.state/scps/*.json` (19 SCPs), `ndx-try-aws-lza` (security-config.yaml), `innovation-sandbox-on-aws` (kms.ts, rest-api-all.ts, cloudfront-ui-api.ts), `ndx-try-aws-scp`
 
 ## Executive Summary
 
-This document analyzes the NDX:Try AWS platform's alignment with UK government cloud security frameworks, including NCSC Cloud Security Principles and GDS Service Standard. It provides a comprehensive summary of implemented security controls and identifies gaps for future remediation.
-
-**Compliance Frameworks Assessed:**
-1. **NCSC Cloud Security Principles** - UK government cloud security baseline
-2. **GDS Service Standard** - UK government digital service requirements
-3. **NIST Cybersecurity Framework** - Industry-standard security controls
-
-**Overall Assessment:**
-- **Strong Alignment:** Data protection, identity management, secure deployment
-- **Partial Alignment:** Security monitoring, incident response procedures
-- **Gaps Identified:** Formal penetration testing, documented DR procedures
+The NDX:Try AWS platform enforces compliance through a four-layered policy hierarchy: AWS Control Tower managed guardrails, Landing Zone Accelerator (LZA) service control policies and AWS Config rules, Terraform-managed Innovation Sandbox cost and security SCPs, and ISB Core lifecycle protection policies. Together, 19 Service Control Policies restrict region usage to us-east-1 and us-west-2, block expensive services, limit compute instance sizes, protect the ISB control plane, and enforce write protection on idle accounts. The LZA further enables GuardDuty, Security Hub (with FSBP, NIST 800-53 Rev 5, and CIS v3.0.0 standards), Macie, IAM Access Analyzer, and 25+ AWS Config rules across the organization.
 
 ---
 
-## 1. NCSC Cloud Security Principles
-
-### Overview
-
-The National Cyber Security Centre (NCSC) defines 14 Cloud Security Principles for UK public sector organizations using cloud services.
-
-**Source:** https://www.ncsc.gov.uk/collection/cloud/the-cloud-security-principles
-
----
-
-### Principle 1: Data in Transit Protection
-
-**Requirement:** User data transiting networks should be adequately protected against tampering and eavesdropping.
-
-**Implementation:**
-
-| Component | Protection | Details |
-|-----------|-----------|---------|
-| CloudFront | TLS 1.2+ | HTTPS redirect enforced |
-| API Gateway | TLS 1.2+ | Regional endpoint with ACM certificate |
-| S3 | SSL/TLS | Bucket policy denies non-HTTPS access |
-| Lambda↔AWS Services | HTTPS | AWS SDK default behavior |
-
-**Evidence:**
-- CloudFront distribution: `minimumProtocolVersion: TLS_V1_2_2021`
-- API Gateway: Resource policy requires `aws:SecureTransport: true`
-- S3 bucket policy: Denies `s3:*` when `aws:SecureTransport: false`
-
-**Assessment:** ✅ **Compliant**
-
-**Reference:** [61-encryption.md](./61-encryption.md) - TLS Configuration
-
----
-
-### Principle 2: Asset Protection and Resilience
-
-**Requirement:** User data, and the assets storing or processing it, should be protected against physical tampering, loss, damage or seizure.
-
-**Implementation:**
-
-| Asset Type | Protection Mechanism |
-|-----------|---------------------|
-| DynamoDB | Multi-AZ replication, Point-in-Time Recovery |
-| S3 | Cross-region replication (not enabled), Versioning |
-| Lambda | Multi-AZ deployment by default |
-| ECR | Container image replication |
-
-**Resilience Features:**
-- DynamoDB PITR: 35-day continuous backups
-- S3 lifecycle: 3-year retention for cost reports
-- Deletion protection: Enabled on production DynamoDB tables
-
-**Gaps:**
-- No cross-region disaster recovery
-- No documented RTO/RPO targets
-
-**Assessment:** ⚠️ **Partial Compliance** (single-region deployment)
-
-**Recommendations:**
-1. Implement cross-region S3 replication for critical data
-2. Document disaster recovery procedures
-3. Define and test RTO/RPO targets
-
----
-
-### Principle 3: Separation Between Users
-
-**Requirement:** A malicious or compromised user of the service should not be able to affect the service or data of another.
-
-**Implementation:**
-
-| Mechanism | Implementation |
-|-----------|----------------|
-| AWS Accounts | Separate pool accounts per sandbox lease |
-| IAM Isolation | Account-level IAM boundaries |
-| Network Isolation | No shared VPCs between sandboxes |
-| Data Isolation | DynamoDB partition keys by user email |
-
-**Multi-Tenancy Controls:**
-- Each sandbox lease uses a dedicated AWS account
-- No resource sharing between leases
-- API authorization checks user identity (JWT claims)
-- DynamoDB queries filtered by `userEmail`
-
-**Assessment:** ✅ **Compliant**
-
-**Reference:** [60-auth-architecture.md](./60-auth-architecture.md) - User Isolation
-
----
-
-### Principle 4: Governance Framework
-
-**Requirement:** The service provider should have a security governance framework which coordinates and directs its management of the service and information within it.
-
-**Implementation:**
-
-| Area | Implementation |
-|------|----------------|
-| Code Reviews | GitHub pull request requirements |
-| Change Management | GitHub workflows with approval gates |
-| Security Scanning | OpenSSF Scorecard (weekly) |
-| Access Control | IAM Identity Center with MFA |
-
-**Documented Governance:**
-- Architecture Decision Records (ADRs) in ndx repository
-- Deployment procedures documented in runbooks
-- Manual approval required for critical infrastructure changes
-
-**Gaps:**
-- No formal information security management system (ISMS)
-- No documented incident response plan
-
-**Assessment:** ⚠️ **Partial Compliance**
-
-**Recommendations:**
-1. Document formal incident response procedures
-2. Create security policy documents
-3. Establish regular security reviews
-
----
-
-### Principle 5: Operational Security
-
-**Requirement:** The service needs to be operated and managed securely to impede, detect or prevent attacks.
-
-**Implementation:**
-
-| Control | Status |
-|---------|--------|
-| Vulnerability Management | Dependabot enabled |
-| Patch Management | Automated via GitHub Actions |
-| Security Monitoring | CloudWatch Logs, CloudTrail |
-| Configuration Management | Infrastructure as Code (CDK, Terraform) |
-
-**Operational Controls:**
-- GitHub Dependabot for dependency updates
-- Automated deployment pipelines reduce manual errors
-- CloudTrail logs all API activity
-- AWS Config for configuration compliance (LZA)
-
-**Gaps:**
-- No centralized SIEM (Security Information and Event Management)
-- No automated security alerting beyond basic CloudWatch alarms
-
-**Assessment:** ⚠️ **Partial Compliance**
-
-**Recommendations:**
-1. Implement AWS Security Hub
-2. Configure GuardDuty for threat detection
-3. Create security event dashboards
-
----
-
-### Principle 6: Personnel Security
-
-**Requirement:** Service provider staff should be subject to personnel security screening and security education.
-
-**Implementation:**
-
-**Note:** This principle applies to AWS as the cloud provider, not the NDX platform itself.
-
-**NDX Platform Controls:**
-- SSO access requires organizational credentials
-- GitHub access restricted to co-cddo organization
-- Multi-factor authentication required (GitHub, AWS SSO)
-
-**Assessment:** ✅ **Compliant** (relies on AWS and organizational controls)
-
----
-
-### Principle 7: Secure Development
-
-**Requirement:** Services should be designed and developed to identify and mitigate threats to their security.
-
-**Implementation:**
-
-| Practice | Implementation |
-|----------|----------------|
-| Secure Coding | ESLint, TypeScript strict mode |
-| Dependency Scanning | Dependabot, npm audit |
-| Code Review | Required for all PRs |
-| SAST | ESLint security rules |
-| Security Testing | Unit tests, E2E tests |
-
-**Security Practices:**
-- Pre-commit hooks for code quality
-- GitHub Actions security scanning
-- OpenSSF Scorecard for supply chain security
-- No hardcoded secrets (enforced by linting)
-
-**Gaps:**
-- No formal SAST tool (e.g., SonarQube, Snyk)
-- No DAST (Dynamic Application Security Testing)
-- No penetration testing
-
-**Assessment:** ⚠️ **Partial Compliance**
-
-**Recommendations:**
-1. Integrate SAST tool (Snyk, SonarQube)
-2. Conduct annual penetration testing
-3. Implement security champions program
-
----
-
-### Principle 8: Supply Chain Security
-
-**Requirement:** The service provider should ensure that its supply chain satisfactorily supports all of the security principles that the service claims to implement.
-
-**Implementation:**
-
-| Component | Supply Chain Security |
-|-----------|---------------------|
-| AWS Services | AWS certifications (ISO 27001, SOC 2) |
-| npm Packages | Dependabot, npm audit, package-lock.json |
-| Docker Images | Official base images, vulnerability scanning |
-| GitHub Actions | Pinned action versions (SHA hashes) |
-
-**Supply Chain Controls:**
-- OpenSSF Scorecard (supply chain risk assessment)
-- npm package auditing on every build
-- Docker image scanning (manual)
-- GitHub Actions use official actions or pinned SHAs
-
-**Best Practice Example (ndx repository):**
-```yaml
-- uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6.0.1
+## Policy Hierarchy
+
+```mermaid
+flowchart TB
+    subgraph "Layer 1: AWS Control Tower"
+        ct1[aws-guardrails-NllhqI<br/>p-8wd7ba5z]
+        ct2[aws-guardrails-LfCVzN<br/>p-nxzjmfvt]
+        ct3[aws-guardrails-ZkxPzj<br/>p-trgexdi8]
+        ct4[aws-guardrails-mQGCET<br/>p-u1nq4ha1]
+    end
+
+    subgraph "Layer 2: LZA Guardrails"
+        lza1[Core-Guardrails-1<br/>CloudTrail/Config/LZA Protection]
+        lza2[Core-Guardrails-2<br/>Security Services/Root Deny]
+        lza3[Core-Sandbox-Guardrails-1<br/>Network & Storage]
+        lza4[Quarantine-New-Object<br/>New Account Lockdown]
+        lza5[Suspended-Guardrails<br/>Suspended Accounts]
+        lza6[Security-Guardrails-1]
+        lza7[Infrastructure-Guardrails-1]
+        lza8[Core-Workloads-Guardrails-1]
+    end
+
+    subgraph "Layer 3: Terraform SCPs"
+        tf1[RestrictionsScp<br/>Regions, Isolation, Security]
+        tf2[CostAvoidanceComputeScp<br/>EC2/RDS/EKS Limits]
+        tf3[CostAvoidanceServicesScp<br/>Block Expensive Services]
+        tf4[AwsNukeSupportedServicesScp<br/>Nuke Compatibility Allow-list]
+    end
+
+    subgraph "Layer 4: ISB Core SCPs"
+        isb1[ProtectISBResourcesScp<br/>Control Plane Protection]
+        isb2[WriteProtectionScp<br/>Read-Only for Idle Accounts]
+    end
+
+    ct1 --> lza1
+    ct2 --> lza1
+    lza1 --> tf1
+    tf1 --> isb1
+
+    style ct1 fill:#e3f2fd
+    style ct2 fill:#e3f2fd
+    style ct3 fill:#e3f2fd
+    style ct4 fill:#e3f2fd
+    style lza1 fill:#e8f5e9
+    style lza2 fill:#e8f5e9
+    style lza3 fill:#e8f5e9
+    style tf1 fill:#fff9c4
+    style tf2 fill:#fff9c4
+    style tf3 fill:#fff9c4
+    style tf4 fill:#fff9c4
+    style isb1 fill:#fce4ec
+    style isb2 fill:#fce4ec
 ```
 
-**Gaps:**
-- No automated container image scanning (ECR scanning not enabled)
-- No SBOM (Software Bill of Materials) generation
+---
 
-**Assessment:** ⚠️ **Partial Compliance**
+## 1. Service Control Policies (19 Total)
 
-**Recommendations:**
-1. Enable ECR image scanning
-2. Generate and publish SBOMs
-3. Implement container signing with AWS Signer
+### SCP Inventory by Source
+
+| Source | Count | Management Tool |
+|--------|-------|-----------------|
+| AWS (FullAWSAccess) | 1 | AWS Managed |
+| AWS Control Tower | 4 | Control Tower Managed |
+| LZA | 8 | LZA Pipeline (security-config.yaml) |
+| Terraform | 4 | co-cddo/ndx-try-aws-scp |
+| ISB Core | 2 | innovation-sandbox-on-aws |
+| **Total** | **19** | |
+
+### Complete SCP List
+
+| Policy ID | Name | Source |
+|-----------|------|--------|
+| p-FullAWSAccess | FullAWSAccess | AWS |
+| p-8wd7ba5z | aws-guardrails-NllhqI | Control Tower |
+| p-nxzjmfvt | aws-guardrails-LfCVzN | Control Tower |
+| p-trgexdi8 | aws-guardrails-ZkxPzj | Control Tower |
+| p-u1nq4ha1 | aws-guardrails-mQGCET | Control Tower |
+| p-wr0deafe | AWSAccelerator-Core-Guardrails-1 | LZA |
+| p-eybze26q | AWSAccelerator-Core-Guardrails-2 | LZA |
+| p-eolruvn3 | AWSAccelerator-Core-Sandbox-Guardrails-1 | LZA |
+| p-k3kvpq9a | AWSAccelerator-Core-Workloads-Guardrails-1 | LZA |
+| p-s37b6cez | AWSAccelerator-Suspended-Guardrails | LZA |
+| p-txuho3u8 | AWSAccelerator-Quarantine-New-Object | LZA |
+| p-vtn1xi9m | AWSAccelerator-Security-Guardrails-1 | LZA |
+| p-w2ssyciy | AWSAccelerator-Infrastructure-Guardrails-1 | LZA |
+| p-6tw8eixp | InnovationSandboxRestrictionsScp | Terraform |
+| p-1rzl0ufv | InnovationSandboxCostAvoidanceComputeScp | Terraform |
+| p-64setrzn | InnovationSandboxCostAvoidanceServicesScp | Terraform |
+| p-7pd0szg9 | InnovationSandboxAwsNukeSupportedServicesScp | Terraform |
+| p-gn4fu3co | InnovationSandboxProtectISBResourcesScp | ISB Core |
+| p-tyb1wjxv | InnovationSandboxWriteProtectionScp | ISB Core |
 
 ---
 
-### Principle 9: Secure User Management
+## 2. Innovation Sandbox SCPs (Detail)
 
-**Requirement:** Your provider should make the tools available for you to securely manage your use of their service.
+### InnovationSandboxRestrictionsScp (p-6tw8eixp)
 
-**Implementation:**
+**Attached To**: ndx_InnovationSandboxAccountPool OU (parent, inherited by all child OUs)
 
-| Feature | Implementation |
-|---------|----------------|
-| Identity Provider | IAM Identity Center (SAML 2.0) |
-| MFA | Enforced via IAM Identity Center |
-| RBAC | IAM roles and policies |
-| Session Management | 4-hour JWT expiry, SAML session timeout |
+**Statements**:
 
-**User Management:**
-- IAM Identity Center for centralized user management
-- Group-based access control (ISB-Admins, ISB-Users, ISB-Approvers)
-- Short-lived credentials (JWT 4 hours, STS 1 hour)
-- Audit logging via CloudTrail
+| SID | Effect | What It Does |
+|-----|--------|--------------|
+| `DenyRegionAccess` | Deny | Restricts all actions (except Bedrock) to **us-east-1** and **us-west-2** only |
+| `DenyExpensiveBedrockModels` | Deny | Blocks `InvokeModel`/`Converse` on `anthropic.claude*opus*` and `anthropic.claude*sonnet*` models |
+| `SecurityAndIsolationRestrictions` | Deny | Blocks billing portal, CloudTrail service channels, RAM resource sharing, WAFv2 firewall manager, SSM document sharing, network manager |
+| `CostImplicationRestrictions` | Deny | Blocks reserved instance purchases, billing modifications, Shield subscriptions, Cost Explorer modifications |
+| `OperationalRestrictions` | Deny | Blocks Direct Connect, CloudHSM, Route53 Domains, Storage Gateway, Chime, region enablement, and 30+ other restricted services |
 
-**Assessment:** ✅ **Compliant**
+**Exempted Principals**: `InnovationSandbox-ndx*`, `AWSReservedSSO_ndx_IsbAdmins*`, `stacksets-exec-*`, `AWSControlTowerExecution`
 
-**Reference:** [60-auth-architecture.md](./60-auth-architecture.md)
+**Source**: `.state/scps/p-6tw8eixp.json`
 
----
+### InnovationSandboxCostAvoidanceComputeScp (p-1rzl0ufv)
 
-### Principle 10: Identity and Authentication
+**Attached To**: Active OU
 
-**Requirement:** All access to service interfaces should be constrained to authenticated and authorised individuals.
+**Statements**:
 
-**Implementation:**
+| SID | Effect | What It Does |
+|-----|--------|--------------|
+| `DenyUnallowedEC2` | Deny | Only allows: t2.micro/small/medium, t3.micro/small/medium/large, t3a.micro/small/medium/large, m5.large/xlarge, m6i.large/xlarge |
+| `DenyExpensiveEC2` | Deny | Blocks GPU (p*, g*), Inferentia (inf*, trn*), bare metal (*.metal*), and instances >= 12xlarge |
+| `DenyExpensiveEBS` | Deny | Blocks Provisioned IOPS volumes (io1, io2) |
+| `DenyLargeEBS` | Deny | Blocks EBS volumes > 500 GB |
+| `DenyUnallowedRDS` | Deny | Only allows: db.t3.*, db.t4g.*, db.m5.large/xlarge, db.m6g.large/xlarge, db.m6i.large/xlarge |
+| `DenyUnallowedCache` | Deny | Only allows: cache.t3.*, cache.t4g.*, cache.m5.large, cache.m6g.large |
+| `LimitEKSSize` | Deny | Blocks EKS node groups with maxSize > 5 |
+| `LimitASGSize` | Deny | Blocks Auto Scaling Groups with MaxSize > 10 |
+| `DenyLambdaPC` | Deny | Blocks Lambda provisioned concurrency |
 
-| Interface | Authentication Method |
-|-----------|---------------------|
-| ISB UI | SAML 2.0 via IAM Identity Center |
-| ISB API | JWT Bearer tokens (Lambda authorizer) |
-| AWS Console | IAM Identity Center SSO |
-| GitHub Actions | OIDC (short-lived tokens) |
+**Source**: `.state/scps/p-1rzl0ufv.json`
 
-**Authentication Controls:**
-- SAML assertion validation (signature, timestamp, audience)
-- JWT signature verification (HMAC-SHA256)
-- OIDC token validation (GitHub issuer, repository scope)
-- No long-lived credentials (access keys replaced with OIDC)
+### InnovationSandboxCostAvoidanceServicesScp (p-64setrzn)
 
-**Assessment:** ✅ **Compliant**
+**Attached To**: Active OU
 
-**Reference:** [60-auth-architecture.md](./60-auth-architecture.md), [51-oidc-configuration.md](./51-oidc-configuration.md)
+**Statements**:
 
----
+| SID | Effect | Blocked Services |
+|-----|--------|------------------|
+| `DenyExpensiveML` | Deny | SageMaker endpoints, training jobs, hyperparameter tuning |
+| `DenyExpensiveData` | Deny | EMR, Redshift clusters, GameLift fleets |
+| `DenyExpensiveServices` | Deny | MSK, FSx, Kinesis streams, dedicated hosts, reserved instances/savings plans, Neptune, DocumentDB, MemoryDB, OpenSearch, Batch compute environments, Glue jobs/dev endpoints, Timestream, QLDB |
 
-### Principle 11: External Interface Protection
+**Source**: `.state/scps/p-64setrzn.json`
 
-**Requirement:** All external or less trusted interfaces of the service should be identified and appropriately defended.
+### InnovationSandboxAwsNukeSupportedServicesScp (p-7pd0szg9)
 
-**Implementation:**
+**Attached To**: ndx_InnovationSandboxAccountPool OU (parent)
 
-| Interface | Protection |
-|-----------|-----------|
-| CloudFront (UI) | WAF rules, TLS, HSTS headers |
-| API Gateway | Lambda authorizer, rate limiting, resource policies |
-| Public GitHub Repos | Read-only for external users |
-| ECR | Private repositories |
+**Type**: Allow-list (uses `NotAction` to deny everything except listed services)
 
-**External Interface Security:**
-- CloudFront enforces HTTPS redirect
-- API Gateway requires valid JWT token
-- No public S3 buckets (block public access enabled)
-- GitHub OIDC roles have fork protection
+**Purpose**: Restricts sandbox accounts to only use AWS services that AWS Nuke can clean up, ensuring accounts can be properly recycled after lease termination.
 
-**Assessment:** ✅ **Compliant**
+**Allowed Services**: 130+ services including EC2, S3, Lambda, DynamoDB, RDS, ECS, EKS, CloudFormation, IAM, Bedrock, SageMaker, ElastiCache, API Gateway, CloudFront, and more.
 
----
+**Source**: `.state/scps/p-7pd0szg9.json`
 
-### Principle 12: Secure Service Administration
+### InnovationSandboxProtectISBResourcesScp (p-gn4fu3co)
 
-**Requirement:** Systems used for administration of a cloud service will have highly privileged access to that service. Their compromise would have significant impact.
+**Attached To**: ndx_InnovationSandboxAccountPool OU (parent)
 
-**Implementation:**
+**Statements**:
 
-| Administrative Interface | Security Control |
-|------------------------|------------------|
-| AWS Console | IAM Identity Center MFA |
-| AWS CLI | SSO temporary credentials |
-| GitHub | MFA required, branch protection |
-| Terraform/CDK | Manual approval gates |
+| SID | Effect | What It Protects |
+|-----|--------|------------------|
+| `ProtectIsbControlPlaneResources` | Deny all | ISB IAM roles (`InnovationSandbox-ndx*`), SSO reserved roles, ISB-prefixed resources (`*Isb-ndx*`), stacksets-exec roles, SAML providers |
+| `ProtectControlTowerResources` | Deny all | CloudTrail trails, EventBridge rules, Lambda functions, log groups, SNS topics, IAM roles prefixed with `aws-controltower-` |
+| `DenyConfigActions` | Deny | Prevents deletion/modification of AWS Config recorder and delivery channel |
+| `ProtectControlTowerTaggedConfigResources` | Deny | Prevents modification of Config resources tagged `aws-control-tower: managed-by-control-tower` |
+| `DenyControlTowerConfigTagActions` | Deny | Prevents adding/removing `aws-control-tower` tags from Config resources |
 
-**Administrative Controls:**
-- No IAM users (SSO only)
-- Time-limited SSO sessions
-- Manual approval for infrastructure changes (Terraform)
-- GitHub branch protection on main branches
-- Audit logging via CloudTrail
+**Source**: `.state/scps/p-gn4fu3co.json`
 
-**Assessment:** ✅ **Compliant**
+### InnovationSandboxWriteProtectionScp (p-tyb1wjxv)
+
+**Attached To**: Available OU, Quarantine OU
+
+**Statement**: A single statement (`DenyAllExceptIsbRoles`) that denies all actions (`Action: *`) on all resources (`Resource: *`) for all principals except the ISB control plane roles. This effectively makes accounts read-only until they are leased or after they enter quarantine.
+
+**Source**: `.state/scps/p-tyb1wjxv.json`
 
 ---
 
-### Principle 13: Audit Information for Users
+## 3. OU-to-SCP Attachment and Effective Permissions
 
-**Requirement:** You should be provided with the audit records needed to monitor access to your service and the data held within it.
+```mermaid
+flowchart TB
+    subgraph "Root (r-2laj)"
+        root_scp["FullAWSAccess<br/>+ CT guardrails x4<br/>+ LZA Core-Guardrails-1<br/>+ LZA Core-Guardrails-2"]
+    end
 
-**Implementation:**
+    subgraph "InnovationSandbox OU"
+        isb_inherit["Inherits Root SCPs"]
+    end
 
-| Audit Source | Retention | Coverage |
-|-------------|-----------|----------|
-| CloudTrail | 90 days (default) | All AWS API calls |
-| CloudWatch Logs | 30 days (configurable) | Lambda function logs, API Gateway logs |
-| DynamoDB | N/A | Lease history stored in table |
-| GitHub Actions | 90 days | Workflow execution logs |
+    subgraph "ndx_InnovationSandboxAccountPool OU"
+        pool_scp["+ RestrictionsScp (regions, isolation)<br/>+ AwsNukeSupportedServicesScp (service allow-list)<br/>+ ProtectISBResourcesScp (control plane)"]
+    end
 
-**Audit Capabilities:**
-- CloudTrail logs all IAM and service actions
-- API Gateway logs all API requests
-- Lambda logs include user context (email from JWT)
-- Lease audit trail in DynamoDB
+    subgraph "Available OU"
+        avail_scp["+ WriteProtectionScp<br/>(full deny except ISB roles)"]
+    end
 
-**Gaps:**
-- CloudTrail logs not archived to S3 long-term
-- No centralized log analysis tool
+    subgraph "Active OU"
+        active_scp["+ CostAvoidanceComputeScp<br/>+ CostAvoidanceServicesScp"]
+    end
 
-**Assessment:** ⚠️ **Partial Compliance**
+    subgraph "Quarantine OU"
+        quar_scp["+ WriteProtectionScp<br/>(full deny except ISB roles)"]
+    end
 
-**Recommendations:**
-1. Archive CloudTrail to S3 with 7-year retention
-2. Implement log aggregation (e.g., AWS CloudWatch Insights)
-3. Create audit dashboards
+    subgraph "Frozen OU"
+        frozen_scp["No additional SCPs<br/>(parent inheritance only)"]
+    end
 
----
+    root_scp --> isb_inherit
+    isb_inherit --> pool_scp
+    pool_scp --> avail_scp
+    pool_scp --> active_scp
+    pool_scp --> quar_scp
+    pool_scp --> frozen_scp
 
-### Principle 14: Secure Use of the Service
+    style avail_scp fill:#ffcdd2
+    style quar_scp fill:#ffcdd2
+    style active_scp fill:#fff9c4
+    style pool_scp fill:#e8f5e9
+```
 
-**Requirement:** The security of cloud services and the data held within them can be undermined if you use the service poorly.
+### Effective SCP Stack by Account State
 
-**Implementation:**
-
-| User Guidance | Status |
-|--------------|--------|
-| Documentation | Comprehensive READMEs in all repos |
-| Security Best Practices | Documented in runbooks |
-| Training Materials | Not formalized |
-| Support Channels | GitHub Issues, Slack |
-
-**User Education:**
-- ISB UI provides clear guidance on sandbox usage
-- Scenario documentation explains security controls
-- Cost defense mechanisms protect against misuse
-
-**Gaps:**
-- No formal user training program
-- No security awareness materials for sandbox users
-
-**Assessment:** ⚠️ **Partial Compliance**
-
-**Recommendations:**
-1. Create user security awareness materials
-2. Document common security pitfalls
-3. Provide security training for administrators
+| Account State | Effective SCPs (cumulative) |
+|---------------|----------------------------|
+| **Available** | FullAWSAccess + CT guardrails + LZA guardrails + RestrictionsScp + NukeSupportedScp + ProtectISBScp + **WriteProtectionScp** |
+| **Active** | FullAWSAccess + CT guardrails + LZA guardrails + RestrictionsScp + NukeSupportedScp + ProtectISBScp + **CostComputeScp + CostServicesScp** |
+| **Frozen** | FullAWSAccess + CT guardrails + LZA guardrails + RestrictionsScp + NukeSupportedScp + ProtectISBScp |
+| **Quarantine** | FullAWSAccess + CT guardrails + LZA guardrails + RestrictionsScp + NukeSupportedScp + ProtectISBScp + **WriteProtectionScp** |
 
 ---
 
-## 2. GDS Service Standard
+## 4. LZA Security Services
 
-### Overview
+The Landing Zone Accelerator enables the following security services across all accounts in the organization:
 
-The Government Digital Service (GDS) defines 14 Service Standard points for UK government services.
+### Security Monitoring
 
-**Source:** https://www.gov.uk/service-manual/service-standard
+| Service | Status | Configuration |
+|---------|--------|---------------|
+| **AWS GuardDuty** | Enabled | S3 protection, EKS protection, findings exported to S3 every 6 hours |
+| **AWS Security Hub** | Enabled | Multi-region aggregation, 3 standards enabled |
+| **Amazon Macie** | Enabled | Policy findings every 15 minutes, published to Security Hub |
+| **IAM Access Analyzer** | Enabled | Organization-level analyzer |
 
----
+### Security Hub Standards
 
-### Point 1: Understand Users and Their Needs
+| Standard | Status | Scope |
+|----------|--------|-------|
+| AWS Foundational Security Best Practices (FSBP) v1.0.0 | Enabled | Root OU (all accounts) |
+| NIST SP 800-53 Rev 5 | Enabled | Root OU (all accounts) |
+| CIS AWS Foundations Benchmark v3.0.0 | Enabled | Root OU (all accounts) |
+| CIS AWS Foundations Benchmark v1.2.0 | Disabled | - |
 
-**Implementation:**
-- NDX website provides clear onboarding guidance
-- Scenario descriptions explain use cases
-- User feedback collected via GitHub Issues
+**Source**: `ndx-try-aws-lza/security-config.yaml` lines 43-80
 
-**Assessment:** ✅ **Met**
+### SCP Integrity
 
----
+```yaml
+scpRevertChangesConfig:
+  enable: true
+```
 
-### Point 2: Solve a Whole Problem for Users
-
-**Implementation:**
-- End-to-end sandbox provisioning (request → access → cleanup)
-- Integrated cost reporting
-- Evidence pack generation for decision-makers
-
-**Assessment:** ✅ **Met**
-
----
-
-### Point 3: Provide a Joined-Up Experience
-
-**Implementation:**
-- Consistent GOV.UK Design System across NDX website
-- Single sign-on via IAM Identity Center
-- Unified API for all ISB operations
-
-**Assessment:** ✅ **Met**
+The LZA automatically reverts unauthorized manual changes to SCPs, maintaining policy integrity.
 
 ---
 
-### Point 4: Make the Service Simple to Use
+## 5. AWS Config Rules
 
-**Implementation:**
-- One-click scenario deployment
-- Automated account provisioning
-- Clear status indicators in UI
+The LZA deploys 25+ AWS Config rules for compliance monitoring. Key rules include:
 
-**Assessment:** ✅ **Met**
+### Encryption Compliance
 
----
+| Rule | Resource Type | Purpose |
+|------|---------------|---------|
+| `dynamodb-table-encrypted-kms` | DynamoDB Table | Ensures KMS encryption |
+| `secretsmanager-using-cmk` | Secrets Manager | Ensures CMK usage |
+| `backup-recovery-point-encrypted` | Backup Recovery Point | Ensures encrypted backups |
+| `codebuild-project-artifact-encryption` | CodeBuild | Ensures artifact encryption |
+| `cloudwatch-log-group-encrypted` | CloudWatch | Ensures log encryption |
+| `api-gw-cache-enabled-and-encrypted` | API Gateway Stage | Ensures cache encryption |
 
-### Point 5: Make Sure Everyone Can Use the Service
+### IAM and Access
 
-**Accessibility:**
-- WCAG 2.2 AA compliance (pa11y-ci in CI/CD)
-- GOV.UK Frontend components
-- Lighthouse accessibility audits
+| Rule | Resource Type | Purpose |
+|------|---------------|---------|
+| `iam-user-group-membership-check` | IAM User | Users must belong to groups |
+| `iam-no-inline-policy-check` | IAM User/Role/Group | No inline policies |
+| `iam-group-has-users-check` | IAM Group | Groups must have members |
+| `ec2-instance-profile-attached` | EC2 Instance | Instances need profiles (auto-remediation) |
 
-**Assessment:** ✅ **Met** (zero tolerance accessibility testing)
+### Monitoring and Logging
 
-**Reference:** [50-github-actions-inventory.md](./50-github-actions-inventory.md) - Accessibility workflows
+| Rule | Resource Type | Purpose |
+|------|---------------|---------|
+| `cloudtrail-enabled` | CloudTrail | CloudTrail must be active |
+| `cloudtrail-security-trail-enabled` | CloudTrail | Security trail required |
+| `cloudtrail-s3-dataevents-enabled` | CloudTrail | S3 data events logging |
+| `guardduty-non-archived-findings` | GuardDuty | Findings must be resolved (High: 1 day, Medium: 7 days, Low: 30 days) |
+| `securityhub-enabled` | Security Hub | Security Hub active |
 
----
+### Infrastructure
 
-### Point 6: Have a Multidisciplinary Team
+| Rule | Resource Type | Purpose |
+|------|---------------|---------|
+| `ec2-instance-detailed-monitoring-enabled` | EC2 Instance | Detailed monitoring required |
+| `ec2-volume-inuse-check` | EC2 Volume | Volumes must be attached (deleteOnTermination: TRUE) |
+| `ec2-instances-in-vpc` | EC2 Instance | Instances must be in VPC |
+| `ebs-optimized-instance` | EC2 Instance | EBS optimization required |
+| `ebs-in-backup-plan` | EBS | EBS in backup plan |
+| `rds-in-backup-plan` | RDS | RDS in backup plan |
+| `elb-logging-enabled` | ELB | ELB logging required (auto-remediation) |
+| `no-unrestricted-route-to-igw` | Route Table | No open routes to IGW |
+| `s3-bucket-policy-grantee-check` | S3 Bucket | Bucket policy validation |
 
-**Note:** Organizational structure, not technical implementation
+### Auto-Remediation
 
----
+Two Config rules have automated remediation enabled:
 
-### Point 7: Use Agile Ways of Working
+1. **ec2-instance-profile-attached**: Automatically attaches an IAM instance profile using SSM Automation (`Attach-IAM-Instance-Profile` document)
+2. **elb-logging-enabled**: Automatically enables ELB access logging using SSM Automation (`SSM-ELB-Enable-Logging` document)
 
-**Implementation:**
-- GitHub Projects for sprint planning
-- Continuous deployment pipelines
-- Iterative development with ADRs
-
-**Assessment:** ✅ **Met**
-
----
-
-### Point 8: Iterate and Improve Frequently
-
-**Implementation:**
-- Automated deployment on merge
-- Feature flags via AppConfig
-- A/B testing capabilities (not actively used)
-
-**Assessment:** ✅ **Met**
-
----
-
-### Point 9: Create a Secure Service
-
-**Security Controls Summary:**
-
-| Control Category | Implementation |
-|-----------------|----------------|
-| Authentication | SAML 2.0, JWT, OIDC |
-| Authorization | Lambda authorizer, IAM policies |
-| Encryption | TLS 1.2+, KMS customer-managed keys |
-| Monitoring | CloudTrail, CloudWatch Logs |
-| Vulnerability Management | Dependabot, OpenSSF Scorecard |
-
-**Assessment:** ✅ **Met** (see NCSC principles above)
+**Source**: `ndx-try-aws-lza/security-config.yaml` lines 118-391
 
 ---
 
-### Point 10: Define Success Metrics
+## 6. IAM Password Policy
 
-**Metrics Tracked:**
-- Sandbox lease requests and approvals
-- Cost per sandbox lease
-- User satisfaction (informal)
+The LZA enforces a strict IAM password policy across the organization:
 
-**Gaps:**
-- No formal KPI dashboard
-- Limited usage analytics
+| Setting | Value |
+|---------|-------|
+| Minimum length | 14 characters |
+| Require uppercase | Yes |
+| Require lowercase | Yes |
+| Require numbers | Yes |
+| Require symbols | Yes |
+| Allow user to change | Yes |
+| Password reuse prevention | 24 previous passwords |
+| Max password age | 90 days |
+| Hard expiry | No (grace period allowed) |
 
-**Assessment:** ⚠️ **Partial** (metrics exist but not formalized)
-
----
-
-### Point 11: Choose the Right Tools and Technology
-
-**Technology Choices:**
-- AWS CDK for infrastructure as code
-- TypeScript for type safety
-- Serverless architecture for cost efficiency
-- Eleventy for static site generation
-
-**Assessment:** ✅ **Met** (well-documented ADRs)
+**Source**: `ndx-try-aws-lza/security-config.yaml` lines 99-108
 
 ---
 
-### Point 12: Make New Source Code Open
+## 7. Application-Level Security Controls
 
-**Open Source Status:**
-- All repositories are public on GitHub
-- Apache 2.0 or similar licenses
-- Contributing guidelines provided
+Beyond organization-level policies, the ISB application enforces:
 
-**Assessment:** ✅ **Met**
-
----
-
-### Point 13: Use and Contribute to Open Standards
-
-**Standards Used:**
-- SAML 2.0 for identity federation
-- OIDC for GitHub authentication
-- REST API design
-- OpenAPI specifications
-
-**Assessment:** ✅ **Met**
-
----
-
-### Point 14: Operate a Reliable Service
-
-**Reliability:**
-- Multi-AZ deployments (Lambda, DynamoDB)
-- Point-in-time recovery enabled
-- Automated monitoring and alerting
-
-**Gaps:**
-- No documented SLA
-- No uptime monitoring dashboard
-
-**Assessment:** ⚠️ **Partial**
-
-**Recommendations:**
-1. Define and publish SLA
-2. Implement uptime monitoring (e.g., AWS CloudWatch Synthetics)
-3. Create public status page
+| Control | Implementation | Source |
+|---------|----------------|--------|
+| SAML 2.0 Authentication | passport-saml with IdP cert validation | sso-handler |
+| JWT Bearer Token Auth | HMAC-SHA256, configurable session duration | authorizer-handler.ts |
+| RBAC (3 roles) | Path+method authorization map | authorization-map.ts |
+| WAF IP Allow-List | CIDR-based on X-Forwarded-For | rest-api-all.ts |
+| WAF Rate Limiting | 200 req/min per IP | rest-api-all.ts |
+| AWS Managed WAF Rules | Common Rule Set, IP Reputation, Anonymous IP | rest-api-all.ts |
+| HSTS | 540-day max-age with includeSubDomains | cloudfront-ui-api.ts |
+| Content Security Policy | Strict self-only CSP | cloudfront-ui-api.ts |
+| X-Frame-Options | DENY | cloudfront-ui-api.ts |
+| HTTPS Enforcement | CloudFront REDIRECT_TO_HTTPS | cloudfront-ui-api.ts |
+| S3 SSL Enforcement | enforceSSL: true on all buckets | cloudfront-ui-api.ts |
+| KMS Encryption at Rest | Customer-managed keys for DynamoDB, Secrets, S3 | kms.ts |
+| 30-day Secret Rotation | Automated JWT secret rotation | auth-api.ts |
+| Maintenance Mode | AppConfig-driven, Admin-only access | authorizer-handler.ts |
 
 ---
 
-## 3. NIST Cybersecurity Framework
+## 8. Compliance Summary
 
-### Summary Alignment
+### NCSC Cloud Security Principles Alignment
 
-| Function | Implementation | Gaps |
-|----------|----------------|------|
-| **Identify (ID)** | Asset inventory, risk assessment | No formal risk register |
-| **Protect (PR)** | IAM, encryption, access control | See NCSC gaps above |
-| **Detect (DE)** | CloudTrail, CloudWatch | No SIEM, no GuardDuty |
-| **Respond (RS)** | Incident procedures (informal) | No documented IR plan |
-| **Recover (RC)** | PITR, backups | No tested DR plan |
+| Principle | Status | Key Evidence |
+|-----------|--------|-------------|
+| 1. Data in Transit | Compliant | TLS 1.2+, HSTS, S3 SSL enforcement |
+| 2. Asset Protection | Partial | Multi-AZ (DynamoDB, Lambda), PITR, but single-region |
+| 3. User Separation | Compliant | Dedicated AWS accounts per sandbox lease |
+| 4. Governance | Partial | IaC, code review, SCPs, but no formal ISMS |
+| 5. Operational Security | Partial | Dependabot, CloudTrail, Config, but no centralized SIEM |
+| 6. Personnel Security | Compliant | SSO with MFA, organizational access controls |
+| 7. Secure Development | Partial | TypeScript strict, ESLint, Dependabot, but no SAST/DAST |
+| 8. Supply Chain | Partial | Pinned GitHub Actions, npm audit, OpenSSF Scorecard |
+| 9. User Management | Compliant | IAM Identity Center, group-based RBAC, short-lived credentials |
+| 10. Identity & Auth | Compliant | SAML 2.0, JWT, OIDC, no long-lived credentials |
+| 11. External Interfaces | Compliant | WAF, Lambda authorizer, no public S3 buckets |
+| 12. Secure Admin | Compliant | SSO only, no IAM users, branch protection |
+| 13. Audit Information | Partial | CloudTrail, CloudWatch, but limited retention archival |
+| 14. Secure Use | Partial | Documentation provided, but no formal training programme |
 
----
+### GDS Service Standard
 
-## 4. Security Controls Summary
-
-### Implemented Controls
-
-**Identity and Access Management:**
-- [x] SAML 2.0 authentication
-- [x] JWT token-based API authorization
-- [x] Multi-factor authentication via IAM Identity Center
-- [x] Least-privilege IAM policies
-- [x] GitHub OIDC (no long-lived credentials)
-
-**Data Protection:**
-- [x] TLS 1.2+ for all network traffic
-- [x] Customer-managed KMS encryption for DynamoDB
-- [x] S3 bucket encryption (SSE-S3 or SSE-KMS)
-- [x] Secrets Manager for sensitive data
-- [x] Automatic secret rotation (JWT)
-
-**Network Security:**
-- [x] CloudFront WAF (basic rules)
-- [x] API Gateway resource policies
-- [x] No public S3 buckets
-- [x] VPC endpoints (not currently used)
-
-**Application Security:**
-- [x] Input validation
-- [x] Output encoding
-- [x] CSRF protection (SameSite cookies)
-- [x] Content Security Policy headers
-
-**Infrastructure Security:**
-- [x] Infrastructure as Code (CDK, Terraform)
-- [x] Automated deployment pipelines
-- [x] Immutable infrastructure (Lambda, containers)
-- [x] Deletion protection on critical resources
-
-**Monitoring and Logging:**
-- [x] CloudTrail for all AWS API calls
-- [x] CloudWatch Logs for application logs
-- [x] API Gateway logging
-- [x] Lambda function logging
-
-**Supply Chain Security:**
-- [x] Dependency scanning (Dependabot)
-- [x] OpenSSF Scorecard
-- [x] Pinned GitHub Action versions
-- [x] npm package lock files
-
----
-
-### Security Gaps
-
-**High Priority:**
-1. **No formal incident response plan**
-   - Impact: Delayed response to security incidents
-   - Recommendation: Document and test IR procedures
-
-2. **No automated security alerting**
-   - Impact: Security events may go unnoticed
-   - Recommendation: Implement AWS Security Hub + GuardDuty
-
-3. **No penetration testing**
-   - Impact: Unknown vulnerabilities
-   - Recommendation: Annual penetration testing
-
-**Medium Priority:**
-4. **Single-region deployment**
-   - Impact: No geographic redundancy
-   - Recommendation: Multi-region disaster recovery
-
-5. **No centralized log analysis**
-   - Impact: Difficult to detect patterns
-   - Recommendation: Implement CloudWatch Insights or third-party SIEM
-
-6. **CloudTrail logs not archived**
-   - Impact: Short retention period
-   - Recommendation: Archive to S3 with 7-year retention
-
-**Low Priority:**
-7. **No SAST tool**
-   - Impact: Potential code vulnerabilities
-   - Recommendation: Integrate Snyk or SonarQube
-
-8. **No container image scanning**
-   - Impact: Vulnerable dependencies in containers
-   - Recommendation: Enable ECR scanning
-
----
-
-## 5. Compliance Roadmap
-
-### Q1 2026
-
-- [ ] Document incident response plan
-- [ ] Enable AWS Security Hub
-- [ ] Enable AWS GuardDuty
-- [ ] Archive CloudTrail to S3
-
-### Q2 2026
-
-- [ ] Conduct penetration testing
-- [ ] Implement CloudWatch Insights dashboards
-- [ ] Enable ECR image scanning
-- [ ] Create security event playbooks
-
-### Q3 2026
-
-- [ ] Multi-region disaster recovery planning
-- [ ] SBOM generation and publishing
-- [ ] Formal security training materials
-- [ ] RTO/RPO testing
-
-### Q4 2026
-
-- [ ] Annual security review
-- [ ] Compliance audit preparation
-- [ ] Update risk assessment
-- [ ] Review and update security controls
-
----
-
-## 6. Compliance Assessment Summary
-
-| Framework | Overall Compliance | Strengths | Gaps |
-|-----------|-------------------|-----------|------|
-| **NCSC Cloud Security Principles** | ⚠️ **Partial** (11/14 compliant) | Data protection, identity, secure development | DR planning, security monitoring, penetration testing |
-| **GDS Service Standard** | ✅ **Strong** (12/14 met) | Accessibility, open source, agile development | SLA definition, formal metrics |
-| **NIST CSF** | ⚠️ **Partial** | Identify, Protect functions strong | Detect, Respond, Recover need improvement |
+| Point | Status | Key Evidence |
+|-------|--------|-------------|
+| 5. Accessibility | Met | pa11y-ci, GOV.UK Design System |
+| 9. Create Secure Service | Met | All security controls above |
+| 12. Open Source | Met | All repositories public on GitHub |
+| 14. Reliable Service | Partial | Multi-AZ, PITR, but no documented SLA |
 
 ---
 
 ## Related Documents
 
-- [60-auth-architecture.md](./60-auth-architecture.md) - Authentication controls
-- [61-encryption.md](./61-encryption.md) - Encryption controls
-- [62-secrets-management.md](./62-secrets-management.md) - Secrets management
-- [50-github-actions-inventory.md](./50-github-actions-inventory.md) - CI/CD security
+- [05-service-control-policies.md](./05-service-control-policies.md) - Full SCP detail with OU attachment mapping
+- [10-isb-core-architecture.md](./10-isb-core-architecture.md) - Core ISB architecture
+- [40-lza-configuration.md](./40-lza-configuration.md) - LZA organizational structure and configuration
+- [41-terraform-scp.md](./41-terraform-scp.md) - Terraform SCP module analysis
+- [60-auth-architecture.md](./60-auth-architecture.md) - Authentication and authorization controls
+- [61-encryption.md](./61-encryption.md) - Encryption at rest and in transit
+- [62-secrets-management.md](./62-secrets-management.md) - Secrets rotation and access patterns
 
 ---
-
-**Prepared By:** Architecture Archaeology Project
-**Review Date:** 2026-02-03
-**Next Review:** 2026-08-03 (6 months)
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

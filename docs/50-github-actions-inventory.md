@@ -1,910 +1,500 @@
 # GitHub Actions Workflow Inventory
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Scope:** Complete catalog of CI/CD workflows across 12 NDX:Try AWS repositories
-
----
+> **Last Updated**: 2026-03-02
+> **Sources**: All repositories under `repos/` with `.github/workflows/` directories
 
 ## Executive Summary
 
-The NDX:Try AWS ecosystem uses GitHub Actions for automated CI/CD across 7 of 12 repositories, with 14 distinct workflow files implementing continuous integration, deployment, testing, and security scanning. The workflows leverage GitHub OIDC (OpenID Connect) for secure, credential-less AWS deployments, replacing traditional IAM access keys.
+The NDX:Try AWS ecosystem uses GitHub Actions for automated CI/CD across 10 of 15 repositories, with 25 distinct workflow files implementing continuous integration, deployment, testing, security scanning, and scheduled maintenance. All deployment workflows use GitHub OIDC for credential-less AWS authentication, and the ecosystem spans multiple AWS accounts (568672915267 for the hub, 955063685555 for org management) in us-east-1 and us-west-2. Five repositories either lack CI/CD automation, contain only LZA configuration managed via the AWS console pipeline, or are limited to validation-only workflows.
 
-**Key Findings:**
-- 14 total workflow files across 7 repositories
-- 5 repositories lack CI/CD automation (manual deployment)
-- OIDC authentication used in 100% of deployment workflows
-- Mixed deployment strategies: auto-deploy on merge, manual approval gates, and PR-based validation
-- Strong security posture with OpenSSF Scorecard, dependency scanning, and fork protection
+## CI/CD Pipeline Overview
 
----
+```mermaid
+graph TB
+    subgraph "NDX Website (ndx)"
+        NDX_CI["ci.yaml<br/>Build + Test + Deploy S3"]
+        NDX_INFRA["infra.yaml<br/>CDK Deploy Infrastructure"]
+        NDX_TEST["test.yml<br/>Frontend Tests"]
+        NDX_A11Y["accessibility.yml<br/>WCAG 2.2 AA"]
+        NDX_SC["scorecard.yml<br/>Supply Chain Security"]
+    end
+
+    subgraph "Scenarios Microsite (ndx_try_aws_scenarios)"
+        SCEN_BD["build-deploy.yml<br/>Build + Deploy GH Pages"]
+        SCEN_BP["deploy-blueprints.yml<br/>Deploy CF Templates"]
+        SCEN_DK["docker-build.yml<br/>Build Drupal Container"]
+    end
+
+    subgraph "ISB Satellite Repos"
+        APP_D["approver: deploy.yml<br/>CDK Deploy Lambda"]
+        BILL_D["billing-separator: deploy.yml<br/>CDK Deploy"]
+        BILL_PR["billing-separator: pr-check.yml<br/>Validate PRs"]
+        COST_CI["costs: ci.yml<br/>Build + Test"]
+        COST_D["costs: deploy.yml<br/>CDK Deploy"]
+        DEP_CI["deployer: ci.yml<br/>Build + ECR + CDK"]
+        CLI_PR["client: pr-checks.yml<br/>Lint + Test"]
+        CLI_REL["client: release.yml<br/>GitHub Release"]
+        UTIL_CI["utils: ci.yml<br/>Placeholder CI"]
+    end
+
+    subgraph "Infrastructure Repos"
+        SCP_TF["ndx-try-aws-scp: terraform.yaml<br/>TF Plan/Apply SCPs"]
+        TF_CI["ndx-try-aws-terraform: ci.yaml<br/>TF Validate"]
+    end
+
+    subgraph "Legacy / Sandbox"
+        AWS_NUKE["aws-sandbox: aws-nuke.yml<br/>Weekly Nuke"]
+        AWS_ACCESS["aws-sandbox: deploy-access-lambda.yml<br/>TF Deploy"]
+        AWS_IAM["aws-sandbox: update-iam.yml<br/>TF Deploy"]
+        AWS_TAG["aws-sandbox: update-autotags.yml<br/>AutoTag (disabled)"]
+        MISP_DOK["gc3-misp: docker-ok.yml<br/>TF Validate"]
+        MISP_ECS["gc3-misp: ecs-efs.yml<br/>TF Validate"]
+    end
+
+    NDX_CI -->|"S3 + CloudFront"| AWS_HUB["AWS Hub Account<br/>568672915267"]
+    NDX_INFRA -->|"CDK Deploy"| AWS_HUB
+    NDX_INFRA -->|"Cross-Account"| AWS_ISB["AWS ISB Account<br/>955063685555"]
+    APP_D -->|"CDK Deploy"| AWS_HUB
+    COST_D -->|"CDK Deploy"| AWS_HUB
+    DEP_CI -->|"ECR + CDK"| AWS_HUB
+    BILL_D -->|"CDK Deploy"| AWS_HUB
+    SCP_TF -->|"TF Apply"| AWS_ISB
+    SCEN_BP -->|"CDK Deploy"| AWS_HUB
+    AWS_NUKE -->|"Nuke Resources"| AWS_SANDBOX["AWS Sandbox Account"]
+```
 
 ## Workflow Catalog
 
+### Repository: ndx (NDX Website)
+
+#### 1. ci.yaml -- CI Pipeline
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/ci.yaml` |
+| **Purpose** | Build, lint, test (unit + E2E + accessibility), and deploy static site to S3/CloudFront |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main), `workflow_dispatch` |
+| **Region** | us-west-2 |
+| **Node Version** | 20.17.0 (via `.nvmrc`) |
+
+**Jobs:**
+- `build` -- Build Eleventy site (with path filtering to skip if no frontend changes)
+- `test-unit` -- Jest unit tests
+- `test-e2e` -- Playwright E2E tests (sharded across 2 runners)
+- `test-a11y` -- Playwright accessibility tests (sharded across 2 runners)
+- `deploy-s3` -- Sync `_site/` to `s3://ndx-static-prod/`, invalidate CloudFront distribution `E3THG4UHYDHVWP`
+- `semver` -- Generate semantic version number
+
+**IAM Role:** `arn:aws:iam::568672915267:role/GitHubActions-NDX-ContentDeploy`
+
+**Secrets/Variables:** None beyond OIDC role (hardcoded in workflow)
+
+**Security:** Harden Runner (egress audit), pinned action SHAs, path-based change detection
+
+#### 2. infra.yaml -- Infrastructure Pipeline
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/infra.yaml` |
+| **Purpose** | CDK infrastructure deployment for NDX website backend and signup system |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main), `workflow_dispatch` |
+| **Region** | us-west-2 |
+
+**Jobs:**
+- `infra-unit-tests` -- CDK stack unit tests (path filtered to `infra/`)
+- `infra-e2e-tests` -- GOV.UK Notify E2E tests (currently disabled)
+- `cdk-diff` -- CDK diff on PRs with readonly role, comments on PR
+- `cdk-deploy` -- Deploy CDK stacks on push to main
+- `signup-infra-unit-tests` -- Tests for signup Lambda infrastructure
+- `signup-cdk-deploy` -- Deploy signup Lambda to NDX account
+- `isb-cross-account-role-deploy` -- Deploy CloudFormation cross-account role to ISB account
+
+**IAM Roles:**
+- `arn:aws:iam::568672915267:role/GitHubActions-NDX-InfraDiff` (readonly, PR diffs)
+- `arn:aws:iam::568672915267:role/GitHubActions-NDX-InfraDeploy` (deploy)
+- `arn:aws:iam::955063685555:role/GitHubActions-ISB-InfraDeploy` (cross-account)
+
+**Secrets/Variables:**
+- `NOTIFY_SANDBOX_API_KEY` (E2E tests, currently disabled)
+- `NOTIFY_TEMPLATE_LEASE_APPROVED` (E2E tests, currently disabled)
+- `ISB_NDX_USERS_GROUP_ID` (cross-account role deploy)
+
+**Security:** Fork PRs explicitly blocked from assuming AWS roles (defense-in-depth)
+
+#### 3. test.yml -- Frontend Tests
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/test.yml` |
+| **Purpose** | Run frontend unit tests and signup Lambda tests |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main) |
+
+**Jobs:**
+- `test` -- Unit tests (Jest), Playwright (currently disabled), mitmproxy integration, signup Lambda tests
+
+#### 4. accessibility.yml -- Accessibility Tests
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/accessibility.yml` |
+| **Purpose** | WCAG 2.2 AA compliance testing via pa11y-ci and Lighthouse |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main) |
+
+**Jobs:**
+- `accessibility` -- pa11y-ci tests against built site
+- `lighthouse` -- Lighthouse CI accessibility audit
+
+#### 5. scorecard.yml -- Supply Chain Security
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/scorecard.yml` |
+| **Purpose** | OpenSSF Scorecard analysis for supply chain security |
+| **Triggers** | `push` (main), `schedule` (weekly, Sundays), `branch_protection_rule` |
+
+**Jobs:**
+- `analysis` -- Run Scorecard, upload SARIF to code-scanning dashboard
+
+---
+
+### Repository: ndx_try_aws_scenarios (Scenarios Microsite)
+
+#### 6. build-deploy.yml -- Build and Deploy to GitHub Pages
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/build-deploy.yml` |
+| **Purpose** | Validate schemas, build Eleventy site, run accessibility/Lighthouse tests, deploy to GitHub Pages |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main), `workflow_dispatch` |
+
+**Jobs:**
+- `validate-schema` -- Validate `scenarios.yaml` against JSON schema
+- `build` -- Build Eleventy site, upload Pages artifact
+- `accessibility` -- pa11y-ci tests
+- `lighthouse` -- Lighthouse CI
+- `deploy` -- Deploy to GitHub Pages (main only)
+
+#### 7. deploy-blueprints.yml -- Deploy ISB Blueprints
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/deploy-blueprints.yml` |
+| **Purpose** | Synthesize CDK for LocalGov Drupal, deploy CloudFormation templates to ISB Hub |
+| **Triggers** | `push` (main, specific paths), `workflow_dispatch` |
+| **Region** | us-west-2 |
+
+**IAM Role:** `arn:aws:iam::568672915267:role/isb-hub-github-actions-deploy`
+
+**Jobs:**
+- `synth-localgov-drupal` -- CDK synth, strip bootstrap cruft, validate template
+- `deploy` -- Deploy to ISB Hub via CDK
+
+#### 8. docker-build.yml -- Build LocalGov Drupal Container
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/docker-build.yml` |
+| **Purpose** | Build and publish LocalGov Drupal container to ghcr.io |
+| **Triggers** | `push` (main, docker/drupal paths), `pull_request`, `workflow_dispatch` |
+| **Registry** | `ghcr.io/co-cddo/ndx_try_aws_scenarios-localgov_drupal` |
+
+**Jobs:**
+- `changes` -- Check for Docker file changes (PR only)
+- `build` -- Build and push multi-arch Docker image to GHCR
+
+---
+
 ### Repository: innovation-sandbox-on-aws-approver
 
-#### 1. deploy.yml - Approver Deployment Pipeline
+#### 9. deploy.yml -- Approver CI/CD
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/deploy.yml` |
-| **Purpose** | Build, test, and deploy the ISB Approver Lambda function |
-| **Triggers** | `push` (main), `pull_request` (main), `merge_group` |
+| **Purpose** | Build, test, and deploy the ISB Approver Lambda |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main) |
 | **Region** | us-west-2 |
-| **Node Version** | 20 |
 
-**Workflow Steps:**
-1. Checkout code
-2. Setup Node.js 20
-3. Install dependencies (with Rollup Linux platform workaround)
-4. Build TypeScript
-5. Run linting
-6. Run typecheck
-7. Run tests with coverage
-8. **[Push only]** Configure AWS credentials via OIDC
-9. **[Push only]** Deploy CDK stacks with `--require-approval never`
+**IAM Role:** `arn:aws:iam::568672915267:role/GitHubActions-Approver-InfraDeploy`
 
-**OIDC Configuration:**
-```yaml
-role-to-assume: arn:aws:iam::568672915267:role/GitHubActions-Approver-InfraDeploy
-aws-region: us-west-2
-```
-
-**Permissions:**
-- `id-token: write` - Required for OIDC authentication
-- `contents: read` - Repository checkout
-
-**Special Notes:**
-- Workaround for Rollup platform-specific dependency issue (npm issue #4828)
-- Auto-deploys to production on merge to main (no manual approval)
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-approver/.github/workflows/deploy.yml`
+**Auto-deploys on push to main.** Runs lint, typecheck, and tests on all events.
 
 ---
 
 ### Repository: innovation-sandbox-on-aws-billing-seperator
 
-#### 2. deploy.yml - Billing Separator Manual Deployment
+#### 10. deploy.yml -- Billing Separator Deployment
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/deploy.yml` |
-| **Purpose** | Deploy ISB Billing Separator CDK stacks (TEMPORARY WORKAROUND) |
-| **Triggers** | `workflow_dispatch` (manual only), `push` (main, validation only) |
-| **Region** | eu-west-2 (configurable) |
-| **Node Version** | 22 |
+| **Purpose** | Validate and deploy the ISB Billing Separator CDK stack |
+| **Triggers** | `push` (main), `workflow_dispatch` (with environment choice: dev/prod) |
 
-**Job Structure:**
+**IAM Role:** `${{ secrets.AWS_ROLE_ARN }}` (per environment)
 
-**Job 1: validate** (always runs on push to main)
-- Checkout with submodules
-- Install dependencies
-- Lint
-- Tests (CI mode)
-- Build
-- CDK synth (dry-run validation with test context)
+**Jobs:**
+- `validate` -- Lint, test, build, CDK synth with test parameters
+- `deploy` -- CDK deploy (manual trigger only via `workflow_dispatch`)
 
-**Job 2: deploy** (manual trigger only)
-- Requires manual workflow_dispatch
-- Supports dev/prod environments
-- Requires GitHub environment protection
-- Secrets: `AWS_ROLE_ARN`, Variables: `AWS_REGION`
-
-**OIDC Configuration:**
-```yaml
-role-to-assume: ${{ secrets.AWS_ROLE_ARN }}  # Per-environment secret
-aws-region: ${{ vars.AWS_REGION || 'eu-west-2' }}
-```
-
-**CDK Context (Test Synth):**
-```bash
--c environment=test
--c hubAccountId=123456789012
--c orgMgmtAccountId=098765432109
--c accountTableName=isb-sandbox-accounts
--c sandboxOuId=ou-test-sandbox
--c availableOuId=ou-test-available
--c quarantineOuId=ou-test-quarantine
--c cleanupOuId=ou-test-cleanup
--c intermediateRoleArn=arn:aws:iam::123456789012:role/isb-hub-role
--c orgMgtRoleArn=arn:aws:iam::098765432109:role/isb-org-mgt-role
-```
-
-**Deployment Summary:**
-- Creates GitHub Actions summary with outputs
-- Uploads CDK outputs as artifacts (30-day retention)
-
-**Special Notes:**
-- **This repository is marked for archival** (see issue #70 in ISB)
-- Manual-only deployment prevents accidental production changes
-- Comprehensive test context for CDK synth validation
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-billing-seperator/.github/workflows/deploy.yml`
-
----
-
-#### 3. pr-check.yml - Billing Separator PR Validation
+#### 11. pr-check.yml -- Billing Separator PR Validation
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/pr-check.yml` |
-| **Purpose** | Validate pull requests before merge |
-| **Triggers** | `pull_request` (main), `merge_group` |
-| **Node Version** | 22 |
-
-**Validation Steps:**
-1. Checkout with submodules (ISB submodule required)
-2. Install dependencies
-3. Lint
-4. Tests (CI mode)
-5. Build
-6. CDK synth with test context (same as deploy.yml)
-
-**Permissions:** `contents: read` only (no AWS access)
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-billing-seperator/.github/workflows/pr-check.yml`
+| **Purpose** | Validate PRs: lint, test, build, CDK synth |
+| **Triggers** | `pull_request` (main), `merge_group` (main) |
 
 ---
 
 ### Repository: innovation-sandbox-on-aws-costs
 
-#### 4. ci.yml - Cost Collection CI Pipeline
+#### 12. ci.yml -- Costs CI
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/ci.yml` |
-| **Purpose** | Continuous integration for cost collection service |
-| **Triggers** | `push` (all branches), `pull_request` (main) |
-| **Node Version** | 22 |
+| **Purpose** | Lint, test, build, CDK synth validation |
+| **Triggers** | `push` (all branches), `pull_request` (main), `merge_group` |
 
-**CI Steps:**
-1. Checkout
-2. Install dependencies
-3. Lint
-4. Tests (CI mode)
-5. Build
-6. CDK Synth validation (with test context)
-7. **[PR only]** Upload coverage to Codecov
-
-**Test CDK Context:**
-```bash
---context eventBusName=test-bus
---context costExplorerRoleArn=arn:aws:iam::123456789012:role/test
---context isbLeasesLambdaArn=arn:aws:lambda:us-west-2:123456789012:function:test
-```
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-costs/.github/workflows/ci.yml`
-
----
-
-#### 5. deploy.yml - Cost Collection Manual Deployment
+#### 13. deploy.yml -- Costs Deployment
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/deploy.yml` |
-| **Purpose** | Deploy cost collection Lambda to production |
-| **Triggers** | `workflow_dispatch` (manual only) |
+| **Purpose** | Deploy IsbCostCollectionStack via CDK |
+| **Triggers** | `workflow_dispatch` only |
 | **Region** | us-west-2 |
-| **Node Version** | 22 |
-| **Environment** | production (GitHub environment) |
 
-**Deployment Workflow:**
-1. Branch check (main only)
-2. Lint + Tests
-3. Build
-4. Configure AWS credentials (OIDC)
-5. CDK Deploy with runtime context
+**IAM Role:** `${{ secrets.AWS_ROLE_ARN }}`
 
-**OIDC Configuration:**
-```yaml
-role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-aws-region: us-west-2
-```
-
-**CDK Context (Production):**
-```bash
---context eventBusName=${{ vars.EVENT_BUS_NAME }}
---context costExplorerRoleArn=${{ secrets.COST_EXPLORER_ROLE_ARN }}
---context isbLeasesLambdaArn=${{ secrets.ISB_LEASES_LAMBDA_ARN }}
---context alertEmail=${{ vars.ALERT_EMAIL }}
-```
-
-**Secrets & Variables:**
-- Secrets: `AWS_ROLE_ARN`, `COST_EXPLORER_ROLE_ARN`, `ISB_LEASES_LAMBDA_ARN`
+**Secrets/Variables:**
+- `COST_EXPLORER_ROLE_ARN`, `ISB_API_BASE_URL`, `ISB_JWT_SECRET_PATH`, `COST_COLLECTOR_LAMBDA_ROLE_ARN`, `ISB_JWT_SECRET_KMS_KEY_ARN`
 - Variables: `EVENT_BUS_NAME`, `ALERT_EMAIL`
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-costs/.github/workflows/deploy.yml`
 
 ---
 
 ### Repository: innovation-sandbox-on-aws-deployer
 
-#### 6. ci.yml - Deployer CI/CD Pipeline
+#### 14. ci.yml -- Deployer CI/CD Pipeline
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/ci.yml` |
-| **Purpose** | Complete CI/CD for ISB Deployer Lambda (container-based) |
-| **Triggers** | `push` (main), `pull_request`, `merge_group`, `workflow_dispatch` |
+| **Purpose** | Full CI/CD: lint, typecheck, test, build Docker container, push to ECR, CDK deploy |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main), `workflow_dispatch` |
 | **Region** | us-west-2 |
-| **Node Version** | 22 |
 
-**Job Structure:**
+**Jobs:**
+- `lint` -- ESLint + format check
+- `typecheck` -- TypeScript type check
+- `test` -- Tests with coverage, Codecov upload
+- `build` -- Build Lambda handler, Docker image (ARM64), upload as artifact
+- `deploy` -- Push image to ECR (`isb-deployer-prod`), CDK deploy `DeployerStack`, wait for Lambda update
 
-**Job 1: lint** - ESLint and formatting checks
-**Job 2: typecheck** - TypeScript type validation
-**Job 3: test** - Unit tests with Codecov coverage upload
-**Job 4: build** - Multi-platform Docker build (ARM64)
-- Builds Lambda container image
-- Uses GitHub Actions cache
-- Uploads image as artifact (1-day retention)
-
-**Job 5: deploy** (main branch only)
-- Requires: production environment approval
-- Loads Docker image from artifact
-- Configures AWS credentials (OIDC)
-- Pushes to ECR with SHA and latest tags
-- Deploys CDK stack with image tag
-- Waits for Lambda update completion
-
-**Container Build:**
-```yaml
-Platforms: linux/arm64
-Context: .
-Dockerfile: infrastructure/docker/Dockerfile
-Cache: GitHub Actions cache
-Tags:
-  - isb-deployer:${github.sha}
-  - isb-deployer:latest
-```
-
-**ECR Push:**
-```yaml
-Registry: ${{ steps.login-ecr.outputs.registry }}
-Repository: isb-deployer-prod
-Tags:
-  - ${IMAGE_TAG}
-  - latest
-```
-
-**OIDC Configuration:**
-```yaml
-role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-aws-region: us-west-2
-```
-
-**CDK Deployment:**
-```bash
-npx cdk deploy DeployerStack \
-  --require-approval never \
-  -c imageTag=${{ github.sha }}
-```
-
-**Special Features:**
-- ARM64 Lambda for cost optimization
-- Container-based deployment (not ZIP)
-- Image tag tracking with Git SHA
-- Lambda update wait to ensure deployment completion
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws-deployer/.github/workflows/ci.yml`
+**IAM Role:** `${{ secrets.AWS_DEPLOY_ROLE_ARN }}`
 
 ---
 
-### Repository: ndx_try_aws_scenarios
+### Repository: innovation-sandbox-on-aws-client
 
-#### 7. build-deploy.yml - Scenarios Website Build & Deploy
+#### 15. pr-checks.yml -- Client Library PR Checks
 
 | Property | Value |
 |----------|-------|
-| **File** | `.github/workflows/build-deploy.yml` |
-| **Purpose** | Build Eleventy static site and deploy to GitHub Pages |
-| **Triggers** | `push` (main), `pull_request`, `merge_group`, `workflow_dispatch` |
-| **Node Version** | 20 |
-| **Deployment Target** | GitHub Pages |
+| **File** | `.github/workflows/pr-checks.yml` |
+| **Purpose** | Lint, typecheck, test for the ISB TypeScript client library |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` |
+| **Package Manager** | Yarn |
 
-**Job Structure:**
-
-**Job 1: validate-schema**
-- Validates scenarios.yaml schema
-- Ensures scenario definitions are valid
-
-**Job 2: build**
-- Builds Eleventy site with production URL
-- Uploads build artifact
-- Uploads Pages artifact (main branch only)
-
-**Job 3: accessibility**
-- Downloads build artifact
-- Runs pa11y-ci accessibility tests
-- Reports issues as warnings (non-blocking)
-
-**Job 4: lighthouse**
-- Runs Lighthouse CI for performance auditing
-
-**Job 5: deploy** (main branch only)
-- Deploys to GitHub Pages
-- Uses GitHub Pages deployment action
-
-**GitHub Pages URL:**
-```
-https://aws.try.ndx.digital.cabinet-office.gov.uk
-```
-
-**Accessibility Testing:**
-```bash
-pa11y-ci --config .pa11yci.json
-```
-
-**Permissions:**
-- `contents: read`
-- `pages: write` (deployment job)
-- `id-token: write` (OIDC for Pages)
-
-**Concurrency:** Single deployment at a time (cancel-in-progress: false)
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx_try_aws_scenarios/.github/workflows/build-deploy.yml`
-
----
-
-#### 8. docker-build.yml - LocalGov Drupal Container Build
+#### 16. release.yml -- Client Library Release
 
 | Property | Value |
 |----------|-------|
-| **File** | `.github/workflows/docker-build.yml` |
-| **Purpose** | Build and publish LocalGov Drupal container to GHCR |
-| **Triggers** | `push` (main, path filters), `pull_request`, `workflow_dispatch` |
-| **Registry** | ghcr.io |
-| **Image** | co-cddo/ndx_try_aws_scenarios-localgov_drupal |
-
-**Path Filters (main branch only):**
-```yaml
-- 'cloudformation/scenarios/localgov-drupal/docker/**'
-- 'cloudformation/scenarios/localgov-drupal/drupal/**'
-- 'cloudformation/scenarios/localgov-drupal/.dockerignore'
-- '.github/workflows/docker-build.yml'
-```
-
-**Job Structure:**
-
-**Job 1: changes** (PR only)
-- Detects if Docker-related files changed
-- Skips build if no relevant changes
-
-**Job 2: build**
-- Runs on: push to main, PR with Docker changes, or manual dispatch
-- Builds multi-platform image (linux/amd64)
-- Pushes to GHCR on main branch
-
-**Docker Tags:**
-```yaml
-- type=sha,prefix=sha-         # sha-abc123
-- type=raw,value=latest        # latest (main only)
-- type=ref,event=branch        # branch name (non-main)
-```
-
-**Docker Build Context:**
-```yaml
-Context: cloudformation/scenarios/localgov-drupal
-Dockerfile: cloudformation/scenarios/localgov-drupal/docker/Dockerfile
-Platforms: linux/amd64
-Cache: GitHub Actions cache
-```
-
-**Permissions:**
-- `contents: read`
-- `packages: write` (for GHCR push)
-
-**Special Notes:**
-- Conditional push based on branch and workflow input
-- Uses GitHub Actions cache for layer caching
-- Outputs build summary to GitHub Actions UI
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx_try_aws_scenarios/.github/workflows/docker-build.yml`
+| **File** | `.github/workflows/release.yml` |
+| **Purpose** | Build, pack, and create GitHub Release with tarball |
+| **Triggers** | `push` (tags matching `v*.*.*`) |
 
 ---
 
-### Repository: ndx-try-aws-scp
+### Repository: innovation-sandbox-on-aws-utils
 
-#### 9. terraform.yaml - Terraform SCP Management
+#### 17. ci.yml -- Utils CI (Placeholder)
+
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/ci.yml` |
+| **Purpose** | Placeholder CI check (echo only) |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` |
+
+---
+
+### Repository: ndx-try-aws-scp (Terraform SCP Management)
+
+#### 18. terraform.yaml -- Terraform SCP Pipeline
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/terraform.yaml` |
-| **Purpose** | Manage 5-layer cost defense system with Terraform |
-| **Triggers** | `push` (main), `pull_request`, `merge_group`, `workflow_dispatch` |
-| **Terraform Version** | 1.7.0 |
+| **Purpose** | Manage Service Control Policies via Terraform (plan/apply) |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main), `workflow_dispatch` (plan/apply) |
 | **Region** | eu-west-2 |
-| **Working Directory** | environments/ndx-production |
+| **Terraform Version** | 1.7.0 |
 
-**Job Structure:**
+**Jobs:**
+- `test` -- Python tests (pytest)
+- `plan` -- Terraform plan, comment on PR, upload plan artifact
+- `apply` -- Terraform apply (manual trigger with `apply` action only, requires `production` environment approval)
 
-**Job 1: test** - Python tests for validation scripts
-- Python 3.11
-- pytest for infrastructure tests
+**IAM Role:** `${{ secrets.AWS_ROLE_ARN }}`
 
-**Job 2: plan** - Terraform plan (PRs and pushes)
-- Fork protection: `pull_request.head.repo.fork == false`
-- Terraform format check
-- Init, validate, plan
-- Comments plan on PR (truncated to 60k chars)
-- Uploads plan artifact (5-day retention)
+**Secrets/Variables:**
+- `AWS_ROLE_ARN`, `SLACK_BUDGET_ALERT_EMAIL`
 
-**Job 3: apply** - Terraform apply (manual only)
-- **MANUAL ONLY** - `workflow_dispatch` with action='apply'
-- Requires production environment approval
-- Downloads plan artifact
-- Applies with `-auto-approve`
+**Security:** Harden Runner, fork PRs blocked, environment approval required for apply
 
-**Environment Variables (Cost Defense Layers):**
-
-**Layer 1: Service Control Policies**
-```yaml
-TF_VAR_sandbox_ou_id: ou-2laj-4dyae1oa
-TF_VAR_namespace: ndx
-TF_VAR_managed_regions: '["us-east-1", "us-west-2"]'
-TF_VAR_enable_cost_avoidance: "true"
-TF_VAR_cost_avoidance_ou_id: ou-2laj-sre4rnjs
-```
-
-**Layer 2: Service Quotas**
-```yaml
-TF_VAR_enable_service_quotas: "true"
-TF_VAR_ec2_vcpu_quota: "64"
-TF_VAR_ebs_storage_quota_tib: "1"
-TF_VAR_lambda_concurrency_quota: "100"
-TF_VAR_rds_instance_quota: "5"
-TF_VAR_rds_storage_quota_gb: "500"
-```
-
-**Layer 3: AWS Budgets**
-```yaml
-TF_VAR_enable_budgets: "true"
-TF_VAR_sandbox_pool_ou_id: ou-2laj-sre4rnjs
-TF_VAR_daily_budget_limit: "50"
-TF_VAR_monthly_budget_limit: "1000"
-TF_VAR_enable_service_budgets: "true"
-```
-
-**OIDC Configuration:**
-```yaml
-role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-aws-region: eu-west-2
-```
-
-**Security Features:**
-- Harden Runner (Step Security)
-- Egress policy: audit
-- Fork blocking at workflow and IAM level
-- Manual apply only (prevents auto-deployment)
-
-**Special Notes:**
-- Manages cost defense for 24-hour sandbox leases
-- Region restriction: Only US regions allowed (eu-west-2 forbidden)
-- Budget emails sent to Slack webhook
-- Plan output saved to file to avoid "argument list too long" errors
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx-try-aws-scp/.github/workflows/terraform.yaml`
+**Environment Variables (inline):**
+- `TF_VAR_sandbox_ou_id`, `TF_VAR_managed_regions` (`us-east-1`, `us-west-2`), budget limits, OU IDs
 
 ---
 
-### Repository: ndx
+### Repository: ndx-try-aws-terraform
 
-#### 10. accessibility.yml - WCAG 2.2 AA Compliance Testing
-
-| Property | Value |
-|----------|-------|
-| **File** | `.github/workflows/accessibility.yml` |
-| **Purpose** | Mandatory accessibility testing gate (ADR-037) |
-| **Triggers** | `push` (main), `pull_request`, `merge_group` |
-| **Node Version** | 22 |
-| **Timeout** | 10 minutes |
-
-**Job 1: accessibility** - WCAG 2.2 AA Compliance
-- Build site with Yarn
-- Start local HTTP server (port 8080)
-- Run pa11y-ci with zero tolerance
-- Upload accessibility report on failure (30-day retention)
-
-**Job 2: lighthouse** - Lighthouse Accessibility Audit
-- Separate Lighthouse CI run
-- Performance and accessibility metrics
-- Temporary public storage for reports
-
-**Zero Tolerance Policy:**
-- PR blocked if ANY WCAG 2.2 AA violations detected
-- No accessibility regressions allowed
-
-**Permissions:** `read-all`
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx/.github/workflows/accessibility.yml`
-
----
-
-#### 11. ci.yaml - NDX Frontend CI/CD Pipeline
+#### 19. ci.yaml -- Terraform Validate
 
 | Property | Value |
 |----------|-------|
 | **File** | `.github/workflows/ci.yaml` |
-| **Purpose** | Build, test, and deploy NDX website to S3/CloudFront |
-| **Triggers** | `push` (main, tags), `pull_request`, `merge_group`, `workflow_dispatch` |
-| **Region** | us-west-2 |
-| **S3 Bucket** | ndx-static-prod |
-| **CloudFront ID** | E3THG4UHYDHVWP |
+| **Purpose** | Validate Terraform configuration (format, init, validate) |
+| **Triggers** | `push` (main), `pull_request` (main), `merge_group` (main) |
 
-**Job Structure:**
-
-**Job 1: build**
-- Path filter: Skip if only `infra/**` or `docs/**` changed
-- Lint + Build
-- Upload site artifact
-
-**Job 2: test-unit** - Jest unit tests
-
-**Job 3: test-e2e** - Playwright E2E tests
-- Sharded across 2 runners
-- Parallel execution
-- Upload reports on failure
-
-**Job 4: test-a11y** - Playwright accessibility tests
-- Sharded across 2 runners
-- Separate from E2E for granularity
-
-**Job 5: deploy-s3** (main branch only)
-- Requires: build, test-unit, test-e2e, test-a11y
-- Environment: production
-- OIDC authentication
-
-**S3 Deployment:**
-```bash
-aws s3 sync ./_site/ s3://ndx-static-prod/ \
-  --delete \
-  --exact-timestamps \
-  --cache-control "public, max-age=3600" \
-  --exclude ".DS_Store"
-```
-
-**CloudFront Invalidation:**
-```bash
-aws cloudfront create-invalidation \
-  --distribution-id E3THG4UHYDHVWP \
-  --paths "/*"
-```
-
-**OIDC Configuration:**
-```yaml
-role-to-assume: arn:aws:iam::568672915267:role/GitHubActions-NDX-ContentDeploy
-aws-region: us-west-2
-```
-
-**Job 6: semver** - Semantic version generation
-- Uses lukaszraczylo/semver-generator
-- Config: `.github/semver.yaml`
-
-**Security:**
-- Harden Runner on all jobs
-- Pinned action SHAs
-- Path-based deployment filtering
-
-**Production URL:**
-```
-https://ndx.digital.cabinet-office.gov.uk
-```
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx/.github/workflows/ci.yaml`
+**No AWS credentials used.** Runs `terraform init -backend=false` and `terraform validate` only.
 
 ---
 
-#### 12. infra.yaml - NDX Infrastructure Deployment
+### Repository: aws-sandbox (Legacy)
+
+#### 20. aws-nuke.yml -- Weekly Environment Nuke
 
 | Property | Value |
 |----------|-------|
-| **File** | `.github/workflows/infra.yaml` |
-| **Purpose** | Deploy NDX CDK infrastructure and signup Lambda |
-| **Triggers** | `push` (main), `pull_request`, `merge_group`, `workflow_dispatch` |
-| **Region** | us-west-2 |
-| **Node Version** | 20.17.0 |
+| **File** | `.github/workflows/aws-nuke.yml` |
+| **Purpose** | Run aws-nuke to clean up sandbox environment weekly |
+| **Triggers** | `schedule` (every Friday at 21:00 UTC), `workflow_dispatch` |
 
-**Job Structure:**
+**IAM Role:** `${{ secrets.AWS_ROLE_TO_ASSUME }}` (environment: `sandbox`)
 
-**Section 1: Main Infrastructure (infra/)**
-
-**Job 1: infra-unit-tests**
-- Path filter: `infra/**` or workflow file
-- Lint + Unit tests
-- Outputs: infra-changed
-
-**Job 2: infra-e2e-tests** (DISABLED)
-- Temporarily disabled due to AWS SDK compatibility issue
-- Would run GOV.UK Notify E2E tests
-
-**Job 3: cdk-diff** (PR only, non-forks)
-- Fork protection: Explicit check + IAM-level enforcement
-- Uses readonly diff role: `GitHubActions-NDX-InfraDiff`
-- Comments PR with CDK diff
-- Filters out expected warnings from readonly role
-
-**Job 4: cdk-deploy** (main branch only)
-- Environment: infrastructure
-- Uses deploy role: `GitHubActions-NDX-InfraDeploy`
-- Pre-deploy validation (build, test, lint, synth)
-- Deploy all stacks
-- Upload CDK outputs (30-day retention)
-
-**Section 2: Signup Infrastructure (infra-signup/)**
-
-**Job 5: signup-infra-unit-tests**
-- Path filter: `infra-signup/**`
-- Lint + Unit tests
-
-**Job 6: signup-cdk-deploy** (main branch only)
-- Deploys signup Lambda to NDX account (568672915267)
-- Uses same InfraDeploy role
-
-**Job 7: isb-cross-account-role-deploy** (main branch only)
-- Deploys to ISB account (955063685555)
-- Environment: isb-infrastructure
-- Uses CloudFormation directly (not CDK)
-
-**Cross-Account CloudFormation Deploy:**
-```bash
-aws cloudformation deploy \
-  --template-file infra-signup/isb-cross-account-role.yaml \
-  --stack-name ndx-signup-cross-account-role \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides GroupId=${{ secrets.ISB_NDX_USERS_GROUP_ID }}
-```
-
-**OIDC Roles:**
-- NDX Account: `arn:aws:iam::568672915267:role/GitHubActions-NDX-InfraDeploy`
-- ISB Account: `arn:aws:iam::955063685555:role/GitHubActions-ISB-InfraDeploy`
-- Readonly (diff): `arn:aws:iam::568672915267:role/GitHubActions-NDX-InfraDiff`
-
-**Fork Protection:**
-```yaml
-if: github.event.pull_request.head.repo.fork == false
-```
-
-**Security:**
-- Harden Runner
-- Fork blocking (workflow + IAM)
-- Separate readonly role for diffs
-- Environment protection on deployments
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx/.github/workflows/infra.yaml`
-
----
-
-#### 13. scorecard.yml - OpenSSF Scorecard Security Scan
+#### 21. deploy-access-lambda.yml -- Deploy Access Lambda
 
 | Property | Value |
 |----------|-------|
-| **File** | `.github/workflows/scorecard.yml` |
-| **Purpose** | Supply-chain security scanning |
-| **Triggers** | `branch_protection_rule`, `schedule` (weekly), `push` (main) |
-| **Schedule** | Sunday 04:23 UTC |
+| **File** | `.github/workflows/deploy-access-lambda.yml` |
+| **Purpose** | Build and deploy access Lambda via Terraform |
+| **Triggers** | `push` (main, `access/` paths), `workflow_dispatch` |
 
-**Security Checks:**
-- Branch protection
-- Dependency scanning
-- Code review enforcement
-- Security policy presence
-- Dangerous workflow patterns
+**Secrets:** `AWS_ROLE_TO_ASSUME`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`
 
-**Outputs:**
-- SARIF file uploaded to Code Scanning dashboard
-- Results published to OpenSSF REST API
-- Artifact uploaded (5-day retention)
-
-**Permissions:**
-- `security-events: write` (Code Scanning upload)
-- `id-token: write` (OpenSSF publishing)
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx/.github/workflows/scorecard.yml`
-
----
-
-#### 14. test.yml - NDX Frontend Tests
+#### 22. update-iam.yml -- Update IAM
 
 | Property | Value |
 |----------|-------|
-| **File** | `.github/workflows/test.yml` |
-| **Purpose** | Frontend and signup Lambda unit tests |
-| **Triggers** | `push` (main), `pull_request`, `merge_group` |
-| **Node Version** | 20.17.0 |
+| **File** | `.github/workflows/update-iam.yml` |
+| **Purpose** | Deploy IAM configuration via Terraform |
+| **Triggers** | `push` (main, `iam/` paths), `workflow_dispatch` |
 
-**Test Coverage:**
+**Secrets:** `AWS_ROLE_TO_ASSUME`, `OIDC_CLIENT_ID`
 
-**Frontend Tests:**
-- Path filter: Excludes `infra/**`, `infra-signup/**`, `docs/**`
-- Unit tests with Yarn
-- Playwright browser installation
-- mitmproxy setup for E2E (currently disabled)
+#### 23. update-autotags.yml -- Update AutoTags (Disabled)
 
-**Signup Tests:**
-- Path filter: `infra-signup/**`
-- Separate test run in infra-signup directory
-
-**Disabled Tests:**
-- E2E tests (proxy configuration issues)
-- Accessibility E2E tests
-
-**Artifact Upload:**
-- Playwright reports on failure (7-day retention)
-
-**Source File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/ndx/.github/workflows/test.yml`
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/update-autotags.yml` |
+| **Purpose** | Deploy GorillaStack AutoTag (currently disabled -- manual trigger only, noted as "not currently used") |
+| **Triggers** | `workflow_dispatch` only |
 
 ---
 
-## Summary Tables
+### Repository: gc3-misp-sandbox-ec2
 
-### Workflow Distribution by Repository
+#### 24. docker-ok.yml -- MISP Terraform Validation
 
-| Repository | Workflow Count | Purpose |
-|-----------|----------------|---------|
-| ndx | 5 | CI, infra, accessibility, scorecard, tests |
-| innovation-sandbox-on-aws-approver | 1 | Deploy |
-| innovation-sandbox-on-aws-billing-seperator | 2 | Deploy, PR check |
-| innovation-sandbox-on-aws-costs | 2 | CI, deploy |
-| innovation-sandbox-on-aws-deployer | 1 | CI/CD |
-| ndx_try_aws_scenarios | 2 | Build/deploy, Docker |
-| ndx-try-aws-scp | 1 | Terraform |
-| **Total** | **14** | |
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/docker-ok.yml` |
+| **Purpose** | Terraform init/validate/plan for MISP sandbox |
+| **Triggers** | `push` (docker-ok, misp-ecr-efs branches) |
+| **Region** | eu-west-2 |
 
-### Repositories Without Workflows
+**IAM Role:** `arn:aws:iam::891377055542:role/paul.hallam-dev` (hardcoded)
 
-| Repository | Deployment Method |
-|-----------|-------------------|
-| innovation-sandbox-on-aws | Manual CDK deployment |
-| innovation-sandbox-on-aws-utils | Manual Python script execution |
-| ndx-try-aws-isb | Empty placeholder |
-| ndx-try-aws-lza | Manual LZA updates via AWS Console |
-| ndx-try-aws-terraform | Manual Terraform apply |
+#### 25. ecs-efs.yml -- MISP ECS/EFS Terraform
 
-### Trigger Types
+| Property | Value |
+|----------|-------|
+| **File** | `.github/workflows/ecs-efs.yml` |
+| **Purpose** | Terraform init/validate/plan for MISP ECS/EFS |
+| **Triggers** | `push` (misp-ecr-efs branch) |
 
-| Trigger | Count | Workflows |
-|---------|-------|-----------|
-| `push` (main) | 12 | All except manual-only |
-| `pull_request` | 11 | Most workflows |
-| `merge_group` | 9 | Modern merge queue support |
-| `workflow_dispatch` | 6 | Manual triggers |
-| `schedule` | 1 | Scorecard (weekly) |
-| `branch_protection_rule` | 1 | Scorecard |
-
-### Deployment Strategies
-
-| Strategy | Count | Repositories |
-|----------|-------|-------------|
-| Auto-deploy on merge | 5 | approver, deployer, ndx (content), ndx (infra), scenarios |
-| Manual approval required | 3 | billing-separator, costs, scp |
-| No automation | 5 | isb, utils, lza, terraform, isb-empty |
-
-### Authentication Methods
-
-| Method | Count | Workflows |
-|--------|-------|-----------|
-| GitHub OIDC | 8 | All deployment workflows |
-| GitHub Token | 2 | Docker (GHCR), Scorecard |
-| None (no AWS) | 4 | PR checks, tests |
+**IAM Role:** `arn:aws:iam::891377055542:role/GithubActionsRole` (hardcoded)
 
 ---
 
-## OIDC Role Mapping
+## Repositories Without Workflows
+
+| Repository | Reason |
+|------------|--------|
+| `innovation-sandbox-on-aws` | Upstream AWS solution -- deployed via CDK from local dev or CI in source repo |
+| `ndx-try-aws-lza` | Landing Zone Accelerator config -- deployed via AWS LZA CodePipeline |
+| `ndx-try-aws-isb` | Contains only LICENSE file -- placeholder/wrapper repo |
+
+## Summary Statistics
+
+| Metric | Count |
+|--------|-------|
+| Total workflow files | 25 |
+| Repositories with workflows | 10 of 15 |
+| Workflows using OIDC | 15 |
+| CDK deployments | 8 |
+| Terraform deployments | 4 |
+| GitHub Pages deployments | 1 |
+| S3/CloudFront deployments | 1 |
+| ECR container pushes | 1 |
+| GHCR container pushes | 1 |
+| Scheduled workflows | 2 (nuke + scorecard) |
+| Distinct IAM roles referenced | 10 |
+
+## Deployment Trigger Summary
 
 ```mermaid
-flowchart TB
-    subgraph "GitHub Repositories"
-        approver[innovation-sandbox-on-aws-approver]
-        billing[innovation-sandbox-on-aws-billing-seperator]
-        costs[innovation-sandbox-on-aws-costs]
-        deployer[innovation-sandbox-on-aws-deployer]
-        ndx_repo[ndx]
-        scp[ndx-try-aws-scp]
+graph LR
+    subgraph "Auto-Deploy on Merge to Main"
+        A1["ndx: ci.yaml (S3)"]
+        A2["ndx: infra.yaml (CDK)"]
+        A3["approver: deploy.yml (CDK)"]
+        A4["deployer: ci.yml (ECR+CDK)"]
+        A5["scenarios: build-deploy.yml (GH Pages)"]
+        A6["scenarios: deploy-blueprints.yml (CDK)"]
+        A7["scenarios: docker-build.yml (GHCR)"]
     end
 
-    subgraph "AWS Account: 568672915267 (Hub)"
-        role1[GitHubActions-Approver-InfraDeploy]
-        role2[GitHubActions-NDX-ContentDeploy]
-        role3[GitHubActions-NDX-InfraDeploy]
-        role4[GitHubActions-NDX-InfraDiff]
+    subgraph "Manual Trigger Required"
+        M1["billing-separator: deploy.yml"]
+        M2["costs: deploy.yml"]
+        M3["scp: terraform.yaml (apply)"]
     end
 
-    subgraph "AWS Account: 955063685555 (ISB/Org)"
-        role5[GitHubActions-ISB-InfraDeploy]
-        role6[Cost Defense Role]
+    subgraph "PR Validation Only"
+        P1["billing-separator: pr-check.yml"]
+        P2["client: pr-checks.yml"]
+        P3["terraform: ci.yaml"]
+        P4["utils: ci.yml"]
     end
 
-    approver -->|OIDC| role1
-    deployer -->|OIDC| role1
-    costs -->|OIDC| role1
-    billing -->|OIDC| role1
-
-    ndx_repo -->|Content Deploy| role2
-    ndx_repo -->|Infra Deploy| role3
-    ndx_repo -->|Infra Diff (PR)| role4
-    ndx_repo -->|ISB Cross-Account| role5
-
-    scp -->|OIDC| role6
+    subgraph "Scheduled"
+        S1["aws-sandbox: aws-nuke.yml (Friday 21:00)"]
+        S2["ndx: scorecard.yml (Sunday 04:23)"]
+    end
 ```
 
 ---
-
-## Environment Variables & Secrets Catalog
-
-### GitHub Secrets (per repository)
-
-**innovation-sandbox-on-aws-billing-seperator:**
-- `AWS_ROLE_ARN` - IAM role for deployment
-
-**innovation-sandbox-on-aws-costs:**
-- `AWS_ROLE_ARN` - IAM role for deployment
-- `COST_EXPLORER_ROLE_ARN` - Cross-account Cost Explorer access
-- `ISB_LEASES_LAMBDA_ARN` - ISB Leases Lambda for JWT auth
-
-**innovation-sandbox-on-aws-deployer:**
-- `AWS_DEPLOY_ROLE_ARN` - IAM role for ECR/Lambda deployment
-
-**ndx:**
-- `ISB_NDX_USERS_GROUP_ID` - Identity Center group ID for signup
-
-**ndx-try-aws-scp:**
-- `AWS_ROLE_ARN` - IAM role for Terraform
-- `SLACK_BUDGET_ALERT_EMAIL` - Budget alert notification email
-
-### GitHub Variables (per repository)
-
-**innovation-sandbox-on-aws-billing-seperator:**
-- `AWS_REGION` - Target region (default: eu-west-2)
-
-**innovation-sandbox-on-aws-costs:**
-- `EVENT_BUS_NAME` - EventBridge bus name
-- `ALERT_EMAIL` - Alert notification email
-
----
-
-## Workflow Best Practices Observed
-
-### Security
-
-1. **OIDC Over Access Keys** - 100% of AWS deployments use temporary credentials
-2. **Fork Protection** - Explicit checks preventing fork PRs from accessing AWS
-3. **Pinned Action Versions** - SHA-pinned actions in ndx repository
-4. **Harden Runner** - Step Security hardening on critical workflows
-5. **Least Privilege** - Separate roles for diff (readonly) vs deploy
-6. **Secret Scoping** - Per-environment secrets with GitHub Environments
-
-### Performance
-
-1. **Path Filtering** - Skip builds when irrelevant files change
-2. **Test Sharding** - Playwright tests split across 2 runners
-3. **GitHub Actions Cache** - Docker layer and dependency caching
-4. **Artifact Reuse** - Build once, test/deploy from artifacts
-
-### Reliability
-
-1. **Manual Approval Gates** - Critical infrastructure changes require workflow_dispatch
-2. **Dry-Run Validation** - CDK synth before deployment
-3. **Wait for Completion** - Lambda update waits ensure deployment success
-4. **Deployment Summaries** - GitHub Actions summaries for visibility
-
-### Testing
-
-1. **Multi-Layer Testing** - Lint, typecheck, unit, E2E, accessibility
-2. **Coverage Tracking** - Codecov integration on multiple repos
-3. **Accessibility First** - Zero tolerance WCAG 2.2 AA policy
-4. **Pre-Commit Checks** - Format, lint, test before merge
-
----
-
-## Related Documents
-
-- [04-cross-account-trust.md](./04-cross-account-trust.md) - IAM roles and OIDC provider
-- [51-oidc-configuration.md](./51-oidc-configuration.md) - Detailed OIDC architecture
-- [52-deployment-flows.md](./52-deployment-flows.md) - Per-repo deployment flows
-- [53-manual-operations.md](./53-manual-operations.md) - Non-automated operations
-
----
-
-**Source Files:**
-- All workflow files: `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/*/github/workflows/*.yml`
-- Repository inventory: `/Users/cns/httpdocs/cddo/ndx-try-arch/docs/00-repo-inventory.md`
+*Generated from source analysis of all `.github/workflows/` directories. See [00-repo-inventory.md](./00-repo-inventory.md) for full repository inventory.*

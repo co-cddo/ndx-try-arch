@@ -1,1258 +1,499 @@
-# Innovation Sandbox Core - Lease Lifecycle Documentation
+# Lease Lifecycle
 
-## Table of Contents
-1. [Lease Lifecycle Overview](#lease-lifecycle-overview)
-2. [Lease Request Flow](#lease-request-flow)
-3. [Lease Approval Flow](#lease-approval-flow)
-4. [Account Provisioning](#account-provisioning)
-5. [Lease Monitoring & State Transitions](#lease-monitoring--state-transitions)
-6. [Lease Cleanup & Account Nuke](#lease-cleanup--account-nuke)
-7. [Lease State Machine](#lease-state-machine)
-8. [DynamoDB Interactions](#dynamodb-interactions)
-9. [EventBridge Message Flows](#eventbridge-message-flows)
+> **Last Updated**: 2026-03-02
+> **Source**: [co-cddo/innovation-sandbox-on-aws](https://github.com/co-cddo/innovation-sandbox-on-aws)
+> **Captured SHA**: `cf75b87`
 
----
+## Executive Summary
 
-## Lease Lifecycle Overview
+A lease represents a user's temporary access to a sandboxed AWS account within the Innovation Sandbox ecosystem. Each lease passes through a well-defined state machine, from request through approval, active monitoring, and eventual termination with automated account cleanup. The lifecycle is orchestrated by the Leases Lambda (API-driven state changes), the Lease Monitoring Lambda (scheduled budget/duration checks), and the Account Lifecycle Manager Lambda (event-driven OU transitions and IDC assignments). Account cleanup is handled by a Step Functions state machine that invokes CodeBuild running AWS Nuke in a container.
 
-A lease represents a user's temporary access to a sandbox AWS account. It passes through multiple states from creation to termination.
-
-### Lease Lifecycle States
-
-```
-PendingApproval → Active → Frozen → Expired/BudgetExceeded/ManuallyTerminated
-                ↓
-            ApprovalDenied
-```
-
-### State Definitions
-
-| State | Description | Duration | Billable |
-|-------|-------------|----------|----------|
-| **PendingApproval** | Lease awaiting manager approval | Minutes to hours | No |
-| **Active** | Lease active, account provisioned | User-defined (hours) | Yes |
-| **Frozen** | Lease suspended, account retained | Indefinite | No |
-| **Expired** | Lease duration exceeded | Terminal | No |
-| **BudgetExceeded** | Lease budget limit exceeded | Terminal | No |
-| **ManuallyTerminated** | User terminated early | Terminal | No |
-| **AccountQuarantined** | Account in quarantine after drift | Terminal | No |
-| **ApprovalDenied** | Manager denied request | Terminal | No |
-
----
-
-## Lease Request Flow
-
-### Sequence Diagram: Lease Request
-
-```mermaid
-sequenceDiagram
-    participant User as User/Frontend
-    participant API as API Gateway
-    participant Authorizer as Authorizer Lambda
-    participant LeasesLambda as Leases Lambda
-    participant LeaseStore as LeaseStore<br/>(DynamoDB)
-    participant EventBus as EventBridge
-    participant LifecycleManager as Lifecycle Manager
-    participant EmailNotif as Email Notification
-
-    User->>API: POST /leases<br/>(leaseTemplateUuid, userEmail?, comments?)
-    
-    API->>Authorizer: Validate JWT token
-    Authorizer-->>API: User roles & email
-    
-    API->>LeasesLambda: Route to POST handler
-    
-    LeasesLambda->>LeasesLambda: Validate request payload
-    LeasesLambda->>LeaseStore: Fetch template
-    LeasesLambda->>LeaseStore: Validate template exists
-    
-    LeasesLambda->>LeasesLambda: Check max leases for user
-    
-    alt User has auto-approval role
-        LeasesLambda->>LeasesLambda: Set status = Active
-        LeasesLambda->>LeaseStore: Allocate sandbox account
-        LeasesLambda->>LeaseStore: Create Active lease
-        LeasesLambda->>EventBus: Publish LeaseApproved event
-    else Need manager approval
-        LeasesLambda->>LeaseStore: Create PendingApproval lease
-        LeasesLambda->>EventBus: Publish LeaseRequested event
-    end
-    
-    EventBus->>LifecycleManager: Forward LeaseRequested
-    LifecycleManager->>EmailNotif: Notify managers (if PendingApproval)
-    
-    EventBus->>EmailNotif: Send user confirmation
-    
-    LeasesLambda-->>API: Return 201 Created
-    API-->>User: Lease object + ID
-```
-
-### POST /leases Handler Logic
-
-```typescript
-// Input validation
-const validRequest = {
-  leaseTemplateUuid: uuid,  // Required
-  userEmail?: email,         // Optional (defaults to requestor)
-  comments?: string          // Optional
-}
-
-// Step 1: Load and validate template
-const template = await leaseStore.get(leaseTemplateUuid)
-if (!template) throw TemplateNotFound
-
-// Step 2: Validate user permissions
-const targetUser = resolveTargetUser(userEmail, requestingUser)
-if (requestingUser has only "User" role && userEmail != requestingUser.email) {
-  throw Unauthorized
-}
-
-// Step 3: Check lease count limits
-const userLeaseCount = await leaseStore.findByUserEmail(targetUser.email)
-if (userLeaseCount.length >= config.maxLeasesPerUser) {
-  throw MaxLeasesExceeded
-}
-
-// Step 4: Check account availability
-const availableAccounts = await accountStore.findByStatus("Available")
-if (!availableAccounts.empty) {
-  throw NoAccountsAvailable
-}
-
-// Step 5: Determine approval path
-if (shouldAutoApprove(template, requestingUser)) {
-  // Auto-approve path
-  const account = availableAccounts[0]
-  
-  const activeLease = createActiveLease({
-    userEmail: targetUser.email,
-    originalLeaseTemplateUuid: template.uuid,
-    awsAccountId: account.awsAccountId,
-    approvedBy: "AUTO_APPROVED",
-    startDate: now(),
-    expirationDate: now() + template.leaseDurationInHours
-  })
-  
-  await leaseStore.create(activeLease)
-  await accountStore.update({ ...account, leaseUuid: activeLease.uuid })
-  
-  await eventBus.publish({
-    source: "leases-api",
-    detailType: "LeaseApproved",
-    detail: {
-      leaseId: { userEmail: activeLease.userEmail, uuid: activeLease.uuid },
-      awsAccountId: activeLease.awsAccountId
-    }
-  })
-} else {
-  // Pending approval path
-  const pendingLease = createPendingLease({
-    userEmail: targetUser.email,
-    originalLeaseTemplateUuid: template.uuid,
-    comments: comments,
-    createdBy: requestingUser.email
-  })
-  
-  await leaseStore.create(pendingLease)
-  
-  await eventBus.publish({
-    source: "leases-api",
-    detailType: "LeaseRequested",
-    detail: {
-      leaseId: { userEmail: pendingLease.userEmail, uuid: pendingLease.uuid },
-      templateId: template.uuid,
-      userEmail: pendingLease.userEmail
-    }
-  })
-}
-
-return { status: "success", data: lease }
-```
-
-### DynamoDB Writes During Request
-
-1. **LeaseTable**: Insert new PendingLease or ActiveLease
-2. **SandboxAccountTable**: Update account status (Available → Active)
-3. **No GSI updates** (StatusIndex maintains itself)
-
----
-
-## Lease Approval Flow
-
-### Sequence Diagram: Lease Approval
-
-```mermaid
-sequenceDiagram
-    participant Manager as Manager/Frontend
-    participant API as API Gateway
-    participant Authorizer as Authorizer Lambda
-    participant LeasesLambda as Leases Lambda
-    participant LeaseStore as LeaseStore<br/>(DynamoDB)
-    participant AccountStore as AccountStore<br/>(DynamoDB)
-    participant EventBus as EventBridge
-    participant LifecycleManager as Lifecycle Manager
-    participant EmailNotif as Email Notification
-
-    Manager->>API: POST /leases/{leaseId}/review<br/>(decision: approve/deny, reason?)
-    
-    API->>Authorizer: Validate JWT + "Manager" role
-    Authorizer-->>API: Authorized
-    
-    API->>LeasesLambda: Route to review handler
-    
-    LeasesLambda->>LeaseStore: Fetch pending lease by ID
-    LeasesLambda->>LeasesLambda: Validate lease is PendingApproval
-    
-    alt decision == "approve"
-        LeasesLambda->>AccountStore: Find Available account
-        LeasesLambda->>LeasesLambda: Convert PendingLease to ActiveLease
-        LeasesLambda->>LeaseStore: Update lease (status=Active, awsAccountId)
-        LeasesLambda->>AccountStore: Update account (Available→Active)
-        LeasesLambda->>EventBus: Publish LeaseApproved event
-        
-        EventBus->>LifecycleManager: Forward LeaseApproved
-        LifecycleManager->>EmailNotif: Notify user (lease approved)
-        
-    else decision == "deny"
-        LeasesLambda->>LeasesLambda: Convert to ApprovalDeniedLease
-        LeasesLambda->>LeaseStore: Update lease (status=ApprovalDenied, ttl)
-        LeasesLambda->>EventBus: Publish LeaseDenied event
-        
-        EventBus->>EmailNotif: Notify user (lease denied, reason)
-    end
-    
-    LeasesLambda-->>API: Return 200 OK
-    API-->>Manager: Updated lease object
-```
-
-### PATCH /leases/{leaseId}/review Handler Logic
-
-```typescript
-// Parse leaseId (base64 composite key)
-const { userEmail, uuid } = decodeLeaseId(leaseId)
-
-// Fetch and validate lease
-const lease = await leaseStore.get(userEmail, uuid)
-if (!isPendingLease(lease)) {
-  throw InvalidLeaseState
-}
-
-// Authorize reviewer
-if (!currentUser.roles.includes("Manager")) {
-  throw Unauthorized
-}
-
-if (decision === "approve") {
-  // Approve path
-  const availableAccount = await accountStore.findByStatus("Available").first()
-  if (!availableAccount) {
-    throw NoAccountsAvailable
-  }
-  
-  const activeLease = {
-    ...lease,
-    status: "Active",
-    awsAccountId: availableAccount.awsAccountId,
-    approvedBy: currentUser.email,
-    startDate: now(),
-    expirationDate: now() + lease.leaseDurationInHours
-  }
-  
-  await leaseStore.update(activeLease)
-  await accountStore.update({
-    ...availableAccount,
-    accountStatus: "Active",
-    leaseUuid: uuid
-  })
-  
-  await eventBus.publish({
-    source: "leases-api",
-    detailType: "LeaseApproved",
-    detail: {
-      leaseId: { userEmail: lease.userEmail, uuid: lease.uuid },
-      awsAccountId: activeLease.awsAccountId,
-      approvedBy: currentUser.email
-    }
-  })
-  
-} else if (decision === "deny") {
-  // Deny path
-  const deniedLease = {
-    ...lease,
-    status: "ApprovalDenied",
-    ttl: Math.floor(now().getTime() / 1000) + (30 * 24 * 60 * 60) // 30 days
-  }
-  
-  await leaseStore.update(deniedLease)
-  
-  await eventBus.publish({
-    source: "leases-api",
-    detailType: "LeaseDenied",
-    detail: {
-      leaseId: { userEmail: lease.userEmail, uuid: lease.uuid },
-      reason: reason || "Request denied by manager",
-      deniedBy: currentUser.email
-    }
-  })
-}
-
-return { status: "success", data: updatedLease }
-```
-
-### DynamoDB Interactions During Approval
-
-**On Approval**:
-1. LeaseTable: Update lease (PendingApproval → Active)
-2. SandboxAccountTable: Update account (Available → Active)
-3. StatusIndex: Lease now queryable by Active status
-
-**On Denial**:
-1. LeaseTable: Update lease (PendingApproval → ApprovalDenied) + set TTL
-2. No account updates
-3. Lease will auto-delete after TTL expires
-
----
-
-## Account Provisioning
-
-### Sequence Diagram: Account Provisioning
-
-```mermaid
-sequenceDiagram
-    participant EventBus as EventBridge
-    participant LifecycleManager as Account Lifecycle<br/>Manager
-    participant IDCService as IDC Service
-    participant OrgService as Organizations<br/>Service
-    participant AccountStore as Account Store<br/>(DynamoDB)
-    participant SecretManager as Secrets<br/>Manager
-
-    EventBus->>LifecycleManager: LeaseApproved event
-    
-    LifecycleManager->>LifecycleManager: Parse event payload
-    LifecycleManager->>AccountStore: Fetch account details
-    
-    LifecycleManager->>OrgService: Move account<br/>(Available OU → Active OU)
-    
-    LifecycleManager->>IDCService: Create user assignment<br/>(if needed)
-    LifecycleManager->>IDCService: Generate temporary credentials
-    
-    LifecycleManager->>SecretManager: Store credentials
-    SecretManager-->>LifecycleManager: Secret ARN
-    
-    LifecycleManager->>AccountStore: Update with provisioning status
-    
-    LifecycleManager->>EventBus: Publish AccountProvisioned event
-```
-
-### Account Provisioning Details
-
-**Event Handler**: `account-lifecycle-manager.ts`
-
-**On LeaseApproved**:
-1. Move account from "Available" OU to "Active" OU
-2. Apply Service Control Policies (SCPs) for duration/budget limits
-3. Create or update IDC user assignments
-4. Generate temporary credentials
-5. Store credentials in Secrets Manager
-6. Send provisioning confirmation to user
-
----
-
-## Lease Monitoring & State Transitions
-
-### Sequence Diagram: Lease Monitoring
-
-```mermaid
-sequenceDiagram
-    participant EventBridgeRule as EventBridge<br/>Scheduled Rule
-    participant LeaseMonitoring as Lease Monitoring<br/>Lambda
-    participant CostExplorer as Cost Explorer<br/>Service
-    participant LeaseStore as Lease Store<br/>(DynamoDB)
-    participant EventBus as EventBridge
-    participant LifecycleManager as Lifecycle<br/>Manager
-    participant EmailNotif as Email<br/>Notification
-
-    EventBridgeRule->>LeaseMonitoring: Trigger (every hour)
-    
-    LeaseMonitoring->>LeaseStore: Find all Active & Frozen leases
-    LeaseMonitoring->>CostExplorer: Get cost report for all leases
-    
-    loop For each Active/Frozen lease
-        LeaseMonitoring->>LeaseMonitoring: Check budget exceeded?
-        LeaseMonitoring->>LeaseMonitoring: Check duration expired?
-        LeaseMonitoring->>LeaseMonitoring: Check budget thresholds?
-        LeaseMonitoring->>LeaseMonitoring: Check duration thresholds?
-        
-        alt Budget exceeded
-            LeaseMonitoring->>EventBus: Publish LeaseBudgetExceeded alert
-        else Duration expired
-            LeaseMonitoring->>EventBus: Publish LeaseExpired alert
-        else Budget threshold breach
-            LeaseMonitoring->>EventBus: Publish LeaseBudgetThreshold alert
-        else Duration threshold breach
-            LeaseMonitoring->>EventBus: Publish LeaseDurationThreshold alert
-        end
-        
-        LeaseMonitoring->>LeaseStore: Update lease (lastCheckedDate, totalCostAccrued)
-    end
-
-    EventBus->>LifecycleManager: Forward alerts
-    LifecycleManager->>LeaseStore: Update lease state if needed
-    LifecycleManager->>EventBus: Publish state transition events
-    
-    EventBus->>EmailNotif: Notify user of alerts/state changes
-```
-
-### Lease Monitoring Logic
-
-```typescript
-// Runs hourly via EventBridge
-async function performAccountMonitoringScan() {
-  // 1. Find all monitored leases
-  const activeLeases = await leaseStore.findByStatus("Active")
-  const frozenLeases = await leaseStore.findByStatus("Frozen")
-  const monitoredLeases = [...activeLeases, ...frozenLeases]
-  
-  // 2. Get cost data
-  const costReport = await costExplorer.getCostForLeases(
-    monitoredLeases.map(l => ({ accountId: l.awsAccountId, startDate: l.startDate }))
-  )
-  
-  // 3. Evaluate each lease
-  const eventsToPublish = []
-  
-  for (const lease of monitoredLeases) {
-    const currentCost = costReport.getCost(lease.awsAccountId)
-    const now = DateTime.now()
-    
-    // Check 1: Budget exceeded (highest priority)
-    if (currentCost > lease.maxSpend) {
-      eventsToPublish.push(
-        new LeaseBudgetExceededAlert({
-          leaseId: { userEmail: lease.userEmail, uuid: lease.uuid },
-          accountId: lease.awsAccountId,
-          budget: lease.maxSpend,
-          totalSpend: currentCost
-        })
-      )
-      continue  // Don't check other conditions
-    }
-    
-    // Check 2: Duration expired
-    if (lease.expirationDate && now > DateTime.fromISO(lease.expirationDate)) {
-      eventsToPublish.push(
-        new LeaseExpiredAlert({
-          leaseId: { userEmail: lease.userEmail, uuid: lease.uuid },
-          accountId: lease.awsAccountId
-        })
-      )
-      continue
-    }
-    
-    // Check 3: Budget thresholds
-    for (const threshold of lease.budgetThresholds || []) {
-      const thresholdAmount = lease.maxSpend * (threshold.percentage / 100)
-      if (currentCost >= thresholdAmount && 
-          currentCost - calculatePreviousCost(lease) < thresholdAmount) {
-        eventsToPublish.push(
-          new LeaseBudgetThresholdBreachedAlert({
-            leaseId: { userEmail: lease.userEmail, uuid: lease.uuid },
-            threshold: threshold.percentage,
-            alertThreshold: thresholdAmount,
-            currentSpend: currentCost
-          })
-        )
-      }
-    }
-    
-    // Check 4: Duration thresholds
-    const remainingHours = calculateRemainingHours(lease)
-    for (const threshold of lease.durationThresholds || []) {
-      if (remainingHours <= threshold.remainingHours) {
-        eventsToPublish.push(
-          new LeaseDurationThresholdBreachedAlert({
-            leaseId: { userEmail: lease.userEmail, uuid: lease.uuid },
-            remainingHours: remainingHours
-          })
-        )
-      }
-    }
-    
-    // Check 5: Freezing threshold (if freeze enabled)
-    if (config.freezeOnBudgetThreshold && currentCost > lease.maxSpend * 0.9) {
-      eventsToPublish.push(
-        new LeaseFreezingThresholdBreachedAlert({
-          leaseId: { userEmail: lease.userEmail, uuid: lease.uuid },
-          currentSpend: currentCost,
-          maxSpend: lease.maxSpend
-        })
-      )
-    }
-  }
-  
-  // 4. Publish all events
-  await eventBus.sendIsbEvents(...eventsToPublish)
-  
-  // 5. Update DynamoDB
-  for (const lease of monitoredLeases) {
-    await leaseStore.update({
-      ...lease,
-      totalCostAccrued: costReport.getCost(lease.awsAccountId),
-      lastCheckedDate: now.toISO()
-    })
-  }
-}
-```
-
-### Alert-to-State Transition Mapping
-
-| Alert | Current State | New State | Action |
-|-------|---------------|-----------|--------|
-| BudgetExceeded | Active/Frozen | BudgetExceeded | Terminal, cleanup queued |
-| LeaseExpired | Active/Frozen | Expired | Terminal, cleanup queued |
-| BudgetThreshold | Active | Active | Alert sent, no state change |
-| DurationThreshold | Active | Active | Alert sent, no state change |
-| FreezingThreshold | Active | Frozen | Auto-freeze (if configured) |
-
----
-
-## Lease Cleanup & Account Nuke
-
-### Sequence Diagram: Lease Cleanup
-
-```mermaid
-sequenceDiagram
-    participant EventBus as EventBridge
-    participant LifecycleManager as Account Lifecycle<br/>Manager
-    participant LeaseStore as Lease Store
-    participant AccountStore as Account Store
-    participant EventBus2 as EventBridge
-    participant StepFunction as Step Function<br/>(Cleaner)
-    participant InitCleanup as Initialize<br/>Cleanup Lambda
-    participant CodeBuild as CodeBuild<br/>AWS Nuke
-    participant OrgService as Organizations<br/>Service
-    participant EmailNotif as Email<br/>Notification
-
-    EventBus->>LifecycleManager: LeaseExpired/BudgetExceeded alert
-    
-    LifecycleManager->>LeaseStore: Update lease status
-    LifecycleManager->>EventBus2: Publish LeaseTerminated event
-    
-    EventBus2->>StepFunction: Trigger Account Cleanup
-    
-    StepFunction->>InitCleanup: Invoke Lambda
-    InitCleanup->>LeaseStore: Fetch lease details
-    InitCleanup->>AccountStore: Fetch account details
-    InitCleanup-->>StepFunction: Return context
-    
-    StepFunction->>CodeBuild: Execute AWS Nuke
-    CodeBuild->>CodeBuild: Delete resources in account
-    CodeBuild-->>StepFunction: Status (success/failure)
-    
-    alt Nuke succeeded
-        StepFunction->>OrgService: Move account<br/>(Active OU → Available OU)
-        StepFunction->>EventBus2: Publish AccountCleanupSuccessful
-        StepFunction->>EmailNotif: Notify user (cleanup complete)
-    else Nuke failed
-        StepFunction->>StepFunction: Wait (configurable)
-        StepFunction->>CodeBuild: Retry AWS Nuke
-        alt Max retries exceeded
-            StepFunction->>OrgService: Move account<br/>(Active OU → Quarantine OU)
-            StepFunction->>EventBus2: Publish AccountCleanupFailed
-            StepFunction->>EmailNotif: Notify admin (quarantine)
-        end
-    end
-    
-    EventBus2->>LifecycleManager: Update account status in DynamoDB
-```
-
-### Step Function State Machine (Cleanup Orchestration)
-
-```
-Start
-  ↓
-AddCodeBuildExecutionResultsObject (Pass state)
-  ↓
-InitializeCleanupLambda (Lambda invoke)
-  ↓ (success)
-StartCodeBuild (CodeBuild task)
-  ↓
-CodeBuildResult? (Choice state)
-  ├─ SUCCESS → AddSuccessfulExecution → SendSuccessEvent → Succeed
-  ├─ FAILURE → Wait (retry delay)
-  │   ↓
-  │   RetryCodeBuild? (Choice state)
-  │   ├─ RETRY_LIMIT_NOT_EXCEEDED → StartCodeBuild (loop)
-  │   └─ RETRY_LIMIT_EXCEEDED → SendFailureEvent → Fail
-  └─ QUEUED/IN_PROGRESS → Wait → Check again (loop)
-```
-
-### Initialize Cleanup Lambda Logic
-
-```typescript
-async function initializeCleanup(event: {
-  accountId: string
-  cleanupExecutionContext: {
-    stateMachineExecutionArn: string
-    stateMachineExecutionStartTime: string
-  }
-}) {
-  // 1. Fetch account and lease details
-  const account = await accountStore.get(event.accountId)
-  const lease = await leaseStore.get(
-    account.associatedLeaseUserEmail,
-    account.associatedLeaseUuid
-  )
-  
-  // 2. Fetch nuke configuration
-  const nukeConfig = await appConfigService.getConfiguration(
-    configProfileId: "NukeConfig"
-  )
-  
-  // 3. Validate preconditions
-  if (!account.canBeNuked()) {
-    throw AccountNotInCleanableState
-  }
-  
-  // 4. Return context for CodeBuild
-  return {
-    globalConfig: await appConfigService.getGlobalConfig(),
-    nukeConfig: nukeConfig,
-    accountId: event.accountId,
-    leaseId: {
-      userEmail: lease.userEmail,
-      uuid: lease.uuid
-    },
-    resourcesPreserved: [],
-    executionContext: event.cleanupExecutionContext
-  }
-}
-```
-
-### CodeBuild AWS Nuke Execution
-
-**Environment Variables** (from StepFunction):
-- `CLEANUP_ACCOUNT_ID` - Target account
-- `STATE_MACHINE_EXECUTION_ID` - Tracking ID
-- `APPCONFIG_*_IDs` - Config profile IDs
-
-**Script**:
-1. Assume role in target account
-2. Download nuke configuration from AppConfig
-3. Execute AWS Nuke with config
-4. Log all deleted resources
-5. Return exit code (0 = success, non-zero = failure)
-
-### Account State Transitions During Cleanup
-
-```
-Active OU
-  ↓
-CleanUp OU (during cleanup)
-  ↓
-Success → Available OU
-  ↓ Failure (after retries)
-Quarantine OU (manual review needed)
-```
-
-### DynamoDB Updates During Cleanup
-
-1. **LeaseTable**: Update lease
-   - Status: Active/Frozen → Expired/BudgetExceeded/ManuallyTerminated
-   - endDate: Set to cleanup timestamp
-   - ttl: Set for 30-day retention
-
-2. **SandboxAccountTable**: Update account
-   - accountStatus: Active/Frozen → Available/Quarantine
-   - leaseUuid: Cleared if returning to Available
-   - lastModifiedDate: Updated
-
----
-
-## Lease State Machine
-
-### State Diagram: Complete Lease Lifecycle
+## Complete Lease State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PendingApproval: Lease Requested
-    
-    PendingApproval --> Active: Lease Approved
-    PendingApproval --> ApprovalDenied: Lease Denied
-    
-    Active --> Frozen: User Freeze Request
-    Active --> Expired: Duration Exceeded
-    Active --> BudgetExceeded: Budget Exceeded
-    Active --> ManuallyTerminated: User Terminate
-    
-    Frozen --> Active: User Unfreeze Request
-    Frozen --> Expired: Duration Exceeded
-    Frozen --> ManuallyTerminated: User Terminate
-    
-    ApprovalDenied --> [*]: Auto-Delete (30 days TTL)
-    Expired --> [*]: Auto-Delete (30 days TTL)
-    BudgetExceeded --> [*]: Auto-Delete (30 days TTL)
-    ManuallyTerminated --> [*]: Auto-Delete (30 days TTL)
-    
+    [*] --> PendingApproval: POST /leases<br/>(requiresApproval=true)
+    [*] --> Active: POST /leases<br/>(auto-approved)
+
+    PendingApproval --> Active: POST /leases/{id}/review<br/>(decision=approve)
+    PendingApproval --> ApprovalDenied: POST /leases/{id}/review<br/>(decision=deny)
+
+    Active --> Frozen: POST /leases/{id}/freeze
+    Active --> ManuallyTerminated: POST /leases/{id}/terminate
+    Active --> Expired: LeaseMonitoring detects<br/>duration exceeded
+    Active --> BudgetExceeded: LeaseMonitoring detects<br/>cost > maxSpend
+
+    Frozen --> Active: POST /leases/{id}/unfreeze
+    Frozen --> ManuallyTerminated: POST /leases/{id}/terminate
+    Frozen --> Expired: LeaseMonitoring detects<br/>duration exceeded
+
+    ApprovalDenied --> [*]: DynamoDB TTL<br/>(30 days)
+    Expired --> [*]: DynamoDB TTL<br/>(30 days)
+    BudgetExceeded --> [*]: DynamoDB TTL<br/>(30 days)
+    ManuallyTerminated --> [*]: DynamoDB TTL<br/>(30 days)
+    AccountQuarantined --> [*]: DynamoDB TTL<br/>(30 days)
+    Ejected --> [*]: DynamoDB TTL<br/>(30 days)
+
     note right of Active
-        Account provisioned
-        Resources available
+        Account in Active OU
+        IDC access granted
         Monitoring enabled
-        Charges accruing
+        Costs accruing
     end note
-    
+
     note right of Frozen
-        Account retained
-        No new resources
-        No charges
-        Can unfreeze later
+        Account in Frozen OU
+        IDC access retained
+        Resources preserved
+        No new resources (SCP)
     end note
-    
-    note right of Expired
-        Cleanup triggered
-        Account nuke started
-        Terminal state
+
+    note left of ApprovalDenied
+        No account allocated
+        TTL set for auto-delete
     end note
 ```
 
-### State Transition Rules
+## Lease States
 
-**To Active**:
-- From: PendingApproval
-- Requirements: Manager approval, account available
-- Actions: Allocate account, apply SCPs, provision credentials
-- Events: LeaseApproved
+| State | Schema | Account Allocated | OU | Monitoring | Terminal |
+|-------|--------|:-----------------:|----:|:----------:|:--------:|
+| `PendingApproval` | `PendingLeaseSchema` | No | -- | No | No |
+| `ApprovalDenied` | `ApprovalDeniedLeaseSchema` | No | -- | No | Yes |
+| `Active` | `MonitoredLeaseSchema` | Yes | Active | Yes | No |
+| `Frozen` | `MonitoredLeaseSchema` | Yes | Frozen | Yes | No |
+| `Expired` | `ExpiredLeaseSchema` | Yes (cleanup queued) | CleanUp | No | Yes |
+| `BudgetExceeded` | `ExpiredLeaseSchema` | Yes (cleanup queued) | CleanUp | No | Yes |
+| `ManuallyTerminated` | `ExpiredLeaseSchema` | Yes (cleanup queued) | CleanUp | No | Yes |
+| `AccountQuarantined` | `ExpiredLeaseSchema` | Yes (quarantined) | Quarantine | No | Yes |
+| `Ejected` | `ExpiredLeaseSchema` | Yes (ejected) | Exit | No | Yes |
 
-**To Frozen**:
-- From: Active
-- Requirements: User request
-- Actions: Move OU, halt charges
-- Events: LeaseFrozen
-
-**To Unfrozen (back to Active)**:
-- From: Frozen
-- Requirements: Lease not expired
-- Actions: Update OU, resume monitoring
-- Events: LeaseUnfrozen
-
-**To Expired**:
-- From: Active, Frozen
-- Requirements: Duration exceeded
-- Actions: Trigger cleanup
-- Events: LeaseExpired
-
-**To BudgetExceeded**:
-- From: Active, Frozen
-- Requirements: Accrued cost >= maxSpend
-- Actions: Trigger cleanup, freeze account
-- Events: LeaseBudgetExceeded
-
-**To ManuallyTerminated**:
-- From: Active, Frozen
-- Requirements: User request
-- Actions: Trigger cleanup
-- Events: LeaseTerminated
-
-**To ApprovalDenied**:
-- From: PendingApproval
-- Requirements: Manager denial
-- Actions: None (lease never activated)
-- Events: LeaseDenied, TTL set (30 days)
+**Source**: `source/common/data/lease/lease.ts`
 
 ---
 
-## DynamoDB Interactions
+## Phase 1: Lease Request
 
-### Lease Request
+### Sequence Diagram
 
-```
-LeaseTable INSERT:
-{
-  userEmail: "user@example.com",
-  uuid: "<random-uuid>",
-  status: "PendingApproval",
-  originalLeaseTemplateUuid: "<template-id>",
-  originalLeaseTemplateName: "Production-Like",
-  createdBy: "user@example.com",
-  comments: "Need for testing new feature",
-  maxSpend: 500,
-  leaseDurationInHours: 48,
-  budgetThresholds: [{ percentage: 75 }, { percentage: 90 }],
-  durationThresholds: [{ remainingHours: 4 }],
-  costReportGroup: "engineering",
-  versionNumber: 2,
-  createdDate: "2024-02-03T10:00:00Z",
-  lastModifiedDate: "2024-02-03T10:00:00Z"
-}
-```
+```mermaid
+sequenceDiagram
+    participant User as User / Frontend
+    participant CF as CloudFront
+    participant APIGW as API Gateway
+    participant Auth as Authorizer Lambda
+    participant Leases as Leases Lambda
+    participant DDB as DynamoDB
+    participant EB as ISBEventBus
 
-### Lease Approval (PendingApproval → Active)
+    User->>CF: POST /api/leases<br/>{leaseTemplateUuid, userEmail?, comments?}
+    CF->>APIGW: POST /leases
+    APIGW->>Auth: Validate JWT
+    Auth-->>APIGW: {user, roles}
+    APIGW->>Leases: Invoke
 
-```
-LeaseTable UPDATE:
-{
-  userEmail: "user@example.com",
-  uuid: "<random-uuid>",
-  status: "Active",  // Changed
-  awsAccountId: "123456789012",  // Added
-  approvedBy: "manager@example.com",  // Added
-  startDate: "2024-02-03T10:15:00Z",  // Added
-  expirationDate: "2024-02-05T10:15:00Z",  // Added
-  lastCheckedDate: "2024-02-03T10:15:00Z",  // Added
-  totalCostAccrued: 0,  // Added
-  ...previous fields
-}
+    Leases->>DDB: Get template (LeaseTemplateTable)
+    Leases->>DDB: Count user active leases (LeaseTable)
+    Leases->>Leases: Validate maxLeasesPerUser
 
-SandboxAccountTable UPDATE:
-{
-  awsAccountId: "123456789012",
-  accountStatus: "Active",  // Changed from Available
-  leaseUuid: "<random-uuid>",  // Added
-  ouPath: "/org/Innovation-Sandbox/Active/",  // Added
-  lastModifiedDate: "2024-02-03T10:15:00Z"
-}
+    alt Template requiresApproval = false
+        Leases->>DDB: Find Available account (SandboxAccountTable)
+        Leases->>DDB: Create ActiveLease (LeaseTable)
+        Leases->>DDB: Update account status to Active
+        Leases->>EB: Publish LeaseApproved event
+    else Template requiresApproval = true
+        Leases->>DDB: Create PendingLease (LeaseTable)
+        Leases->>EB: Publish LeaseRequested event
+    end
 
-StatusIndex: New entry for quick status queries
+    Leases-->>APIGW: 201 Created
+    APIGW-->>CF: Response
+    CF-->>User: Lease object
+
+    EB->>EB: Route to consumers
 ```
 
-### Lease Monitoring (Update Cost & Check Thresholds)
+### DynamoDB Writes
 
-```
-LeaseTable UPDATE (hourly):
-{
-  userEmail: "user@example.com",
-  uuid: "<random-uuid>",
-  lastCheckedDate: "2024-02-03T11:15:00Z",  // Updated
-  totalCostAccrued: 45.67  // Updated with latest cost
-  ...fields unchanged
-}
-```
+**Auto-approved path**:
+1. `LeaseTable` INSERT: New `MonitoredLease` with status `Active`, `awsAccountId`, `startDate`, `expirationDate`, `approvedBy: "AUTO_APPROVED"`
+2. `SandboxAccountTable` UPDATE: Account status from `Available` to `Active`, set lease association
 
-### Lease Termination (Active → Expired/BudgetExceeded)
+**Pending approval path**:
+1. `LeaseTable` INSERT: New `PendingLease` with status `PendingApproval`
+2. No account table changes
 
-```
-LeaseTable UPDATE:
-{
-  userEmail: "user@example.com",
-  uuid: "<random-uuid>",
-  status: "Expired",  // or "BudgetExceeded"
-  endDate: "2024-02-03T14:30:00Z",  // Added
-  ttl: 1714819200,  // Unix timestamp 30 days from now
-  lastModifiedDate: "2024-02-03T14:30:00Z",
-  ...fields unchanged
-}
+**Validation rules** (from global AppConfig):
+- Template must exist and be active
+- User's concurrent active lease count < `maxLeasesPerUser` (default 3)
+- If auto-approved, at least one account must be in `Available` status
+- If `userEmail` differs from requester, requester must be Manager or Admin
 
-SandboxAccountTable UPDATE:
-{
-  awsAccountId: "123456789012",
-  accountStatus: "CleanUp",  // During cleanup
-  lastModifiedDate: "2024-02-03T14:30:00Z",
-  ...fields unchanged
-  // After cleanup succeeds:
-  accountStatus: "Available",  // Reset
-  leaseUuid: null,  // Clear association
-  ouPath: "/org/Innovation-Sandbox/Available/"
-}
-```
-
-### Query Patterns
-
-**Find all active leases for a user**:
-```
-Query LeaseTable
-Key: userEmail = "user@example.com"
-Filter: status = "Active"
-```
-
-**Find all leases by status** (using GSI):
-```
-Query StatusIndex
-Key: status = "Active"
-Sort by: originalLeaseTemplateUuid
-Result: All active leases (cross-user)
-```
-
-**Find leases expiring today**:
-```
-Query LeaseTable with concurrent queries
-Filter: expirationDate < now() AND status = "Active"
-```
-
-**Find cost report groups** (for billing):
-```
-Scan LeaseTable (or query StatusIndex by status)
-Project: costReportGroup, userEmail, totalCostAccrued
-Group results by costReportGroup
-```
+**Source**: `source/lambdas/api/leases/src/leases-handler.ts`
 
 ---
 
-## EventBridge Message Flows
+## Phase 2: Lease Approval
 
-### Event Schema
+### Sequence Diagram
 
-All ISB events follow this pattern:
+```mermaid
+sequenceDiagram
+    participant Manager as Manager / Frontend
+    participant Leases as Leases Lambda
+    participant DDB as DynamoDB
+    participant EB as ISBEventBus
+    participant ALM as Account Lifecycle<br/>Manager Lambda
+    participant IDC as IAM Identity Center
+    participant Orgs as AWS Organizations
+    participant Email as Email Lambda
 
-```json
-{
-  "version": "0",
-  "id": "<event-id>",
-  "detail-type": "<EventDetailType>",
-  "source": "<source-service>",
-  "account": "<account-id>",
-  "time": "<ISO8601-timestamp>",
-  "region": "<region>",
-  "resources": [],
-  "detail": {
-    // Event-specific payload
-  }
-}
+    Manager->>Leases: POST /leases/{leaseId}/review<br/>{decision: "approve" | "deny"}
+
+    alt decision = approve
+        Leases->>DDB: Find Available account
+        Leases->>DDB: Update lease: PendingApproval → Active
+        Leases->>DDB: Update account: Available → Active
+        Leases->>EB: Publish LeaseApproved
+        EB->>ALM: LeaseApproved event
+        ALM->>Orgs: MoveAccount(Available OU → Active OU)
+        ALM->>IDC: CreateAccountAssignment(user, account, permissionSet)
+        EB->>Email: Send approval notification to user
+    else decision = deny
+        Leases->>DDB: Update lease: PendingApproval → ApprovalDenied + TTL
+        Leases->>EB: Publish LeaseDenied
+        EB->>Email: Send denial notification to user
+    end
 ```
 
-### Event Catalog
+### Account Lifecycle Manager Actions on LeaseApproved
 
-#### LeaseRequested
-**Source**: leases-api  
-**Trigger**: POST /leases (pending approval path)  
-**Targets**: Email notifications, admin dashboards
+The Account Lifecycle Manager Lambda handles the physical account provisioning:
 
-```json
-{
-  "detail-type": "LeaseRequested",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "templateId": "<template-uuid>",
-    "userEmail": "user@example.com",
-    "templateName": "Production-Like"
-  }
-}
-```
+1. **Move account to Active OU**: `organizations:MoveAccount` from Available OU to Active OU
+2. **Grant IDC access**: `sso:CreateAccountAssignment` with the user's permission set (User, Manager, or Admin PS)
+3. **Update DynamoDB**: Record the IDC assignment state on the account
 
-#### LeaseApproved
-**Source**: leases-api  
-**Trigger**: POST /leases (auto-approve) or POST /leases/{id}/review (approve)  
-**Targets**: Account provisioning, email notifications, billing system
+The Write Protection SCP is removed when leaving the Available OU (it only applies to Available, CleanUp, Quarantine, Entry, and Exit OUs), enabling the user to create resources.
 
-```json
-{
-  "detail-type": "LeaseApproved",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "awsAccountId": "123456789012",
-    "approvedBy": "manager@example.com" | "AUTO_APPROVED"
-  }
-}
-```
-
-#### LeaseDenied
-**Source**: leases-api  
-**Trigger**: POST /leases/{id}/review (deny)  
-**Targets**: Email notifications
-
-```json
-{
-  "detail-type": "LeaseDenied",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "reason": "Does not meet business requirements",
-    "deniedBy": "manager@example.com"
-  }
-}
-```
-
-#### LeaseFrozen
-**Source**: leases-api  
-**Trigger**: POST /leases/{id}/freeze  
-**Targets**: Account management (OU move), billing
-
-```json
-{
-  "detail-type": "LeaseFrozen",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "awsAccountId": "123456789012"
-  }
-}
-```
-
-#### LeaseUnfrozen
-**Source**: leases-api  
-**Trigger**: POST /leases/{id}/unfreeze  
-**Targets**: Account management, monitoring resume
-
-```json
-{
-  "detail-type": "LeaseUnfrozen",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "awsAccountId": "123456789012"
-  }
-}
-```
-
-#### LeaseBudgetExceeded
-**Source**: lease-monitoring  
-**Trigger**: Hourly monitoring detects cost > maxSpend  
-**Targets**: Account cleanup, email notifications, lifecycle manager
-
-```json
-{
-  "detail-type": "LeaseBudgetExceeded",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "accountId": "123456789012",
-    "budget": 500.00,
-    "totalSpend": 523.45
-  }
-}
-```
-
-#### LeaseExpired
-**Source**: lease-monitoring  
-**Trigger**: Hourly monitoring detects now > expirationDate  
-**Targets**: Account cleanup, email notifications, lifecycle manager
-
-```json
-{
-  "detail-type": "LeaseExpired",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "accountId": "123456789012",
-    "expirationDate": "2024-02-05T10:15:00Z"
-  }
-}
-```
-
-#### LeaseTerminated
-**Source**: leases-api  
-**Trigger**: POST /leases/{id}/terminate  
-**Targets**: Account cleanup, email notifications
-
-```json
-{
-  "detail-type": "LeaseTerminated",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "accountId": "123456789012",
-    "terminatedBy": "user@example.com"
-  }
-}
-```
-
-#### LeaseBudgetThresholdAlert
-**Source**: lease-monitoring  
-**Trigger**: Hourly monitoring detects cost crossing threshold  
-**Targets**: Email notifications
-
-```json
-{
-  "detail-type": "LeaseBudgetThresholdAlert",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "threshold": 75,
-    "alertThreshold": 375.00,
-    "currentSpend": 376.45
-  }
-}
-```
-
-#### LeaseFreezingThresholdBreachedAlert
-**Source**: lease-monitoring  
-**Trigger**: Cost reaches 90% of budget (if auto-freeze enabled)  
-**Targets**: Account management (auto-freeze), email notifications
-
-```json
-{
-  "detail-type": "LeaseFreezingThresholdBreachedAlert",
-  "detail": {
-    "leaseId": {
-      "userEmail": "user@example.com",
-      "uuid": "<lease-uuid>"
-    },
-    "currentSpend": 450.00,
-    "maxSpend": 500.00
-  }
-}
-```
-
-#### AccountCleanupSuccessful
-**Source**: account-cleaner (StepFunction)  
-**Trigger**: AWS Nuke completes successfully  
-**Targets**: Account status update, email notifications, metrics
-
-```json
-{
-  "detail-type": "AccountCleanupSucceeded",
-  "detail": {
-    "accountId": "123456789012",
-    "cleanupExecutionContext": {
-      "stateMachineExecutionArn": "arn:aws:states:...",
-      "stateMachineExecutionStartTime": "2024-02-03T14:30:00Z"
-    }
-  }
-}
-```
-
-#### AccountCleanupFailure
-**Source**: account-cleaner (StepFunction)  
-**Trigger**: AWS Nuke fails after max retries  
-**Targets**: Account quarantine, admin alerts
-
-```json
-{
-  "detail-type": "AccountCleanupFailed",
-  "detail": {
-    "accountId": "123456789012",
-    "error": "AWS Nuke failed after 3 attempts",
-    "cleanupExecutionContext": { ... }
-  }
-}
-```
-
-#### AccountDriftDetected
-**Source**: account-drift-monitoring  
-**Trigger**: Scheduled drift detection finds changes  
-**Targets**: Lifecycle manager, admin alerts
-
-```json
-{
-  "detail-type": "AccountDriftDetected",
-  "detail": {
-    "accountId": "123456789012",
-    "driftDetails": {
-      "services_with_changes": ["ec2", "s3"],
-      "drift_description": "..."
-    }
-  }
-}
-```
-
-### Event Routing Rules
-
-| Event | Rule Name | Targets | Pattern |
-|-------|-----------|---------|---------|
-| LeaseRequested | LeaseRequestedRule | Email (Manager queue) | DetailType = "LeaseRequested" |
-| LeaseApproved | LeaseApprovedRule | Email (User queue), Provisioning | DetailType = "LeaseApproved" |
-| LeaseDenied | LeaseDeniedRule | Email (User queue) | DetailType = "LeaseDenied" |
-| Lease\*Threshold\* | LeaseThresholdRule | Email (User queue) | DetailType matches Threshold pattern |
-| LeaseBudgetExceeded | LeaseTerminalRule | Cleanup StepFunction, Email | DetailType = "LeaseBudgetExceeded" |
-| LeaseExpired | LeaseTerminalRule | Cleanup StepFunction, Email | DetailType = "LeaseExpired" |
-| LeaseTerminated | LeaseTerminalRule | Cleanup StepFunction, Email | DetailType = "LeaseTerminated" |
-| AccountCleanup\* | AccountCleanupRule | Lifecycle Manager, Email | DetailType matches Cleanup pattern |
-| AccountDriftDetected | DriftDetectionRule | Lifecycle Manager, Alerts | DetailType = "AccountDriftDetected" |
-
-### Event Queues
-
-Events are typically sent to SQS queues before Lambda invocation to enable:
-- **Retry logic**: Failed invocations automatically retry
-- **Dead Letter Queue (DLQ)**: Failed messages after max retries
-- **Ordering**: FIFO queues maintain event order per user/account
-- **Concurrency control**: Lambda concurrency limits apply
-
-**Queue Configuration**:
-- **Visibility Timeout**: 5 minutes (adjustable per Lambda)
-- **Message Retention**: 4 days
-- **Max Receive Count**: 3 (before DLQ)
-- **Encryption**: KMS managed
+**Source**: `source/lambdas/account-management/account-lifecycle-management/src/account-lifecycle-manager.ts`
 
 ---
 
-## Error Handling & Recovery
+## Phase 3: Active Lease Monitoring
 
-### Event Processing Failures
+### Monitoring Schedule
 
-**Scenario 1**: Lambda crashes during lease approval
-- Event stays in SQS queue
-- Visibility timeout expires (5 min)
-- Event re-attempted (up to 3 times)
-- After max retries → DLQ for manual review
+The `LeaseMonitoringLambda` runs on a scheduled EventBridge rule and evaluates all `Active` and `Frozen` leases.
 
-**Scenario 2**: DynamoDB update fails
-- TransactionCanceledException caught
-- Retry with exponential backoff
-- Event stays in queue if all retries fail
+```mermaid
+sequenceDiagram
+    participant EB as EventBridge<br/>Scheduled Rule
+    participant LM as Lease Monitoring<br/>Lambda
+    participant DDB as DynamoDB
+    participant CE as Cost Explorer<br/>(via OrgMgt role)
+    participant EventBus as ISBEventBus
 
-**Scenario 3**: EventBridge PutEvents fails
-- Event remains in source SQS queue
-- DLQ receives after max retries
-- Admin review required for manual retry
+    EB->>LM: Trigger (scheduled)
+    LM->>DDB: Query LeaseTable StatusIndex<br/>(status = Active | Frozen)
 
-### State Recovery
+    loop For each monitored lease
+        LM->>CE: GetCostAndUsage(accountId, startDate)
+        CE-->>LM: Cost data
 
-**Scenario**: User's lease partially approved but no account allocated
+        LM->>LM: Evaluate checks
 
-**Detection**: 
-- Lease in Active status but no awsAccountId
+        alt Budget exceeded (cost > maxSpend)
+            LM->>EventBus: LeaseBudgetExceeded
+        else Duration expired (now > expirationDate)
+            LM->>EventBus: LeaseExpired
+        else Budget threshold breached
+            LM->>EventBus: LeaseBudgetThresholdAlert
+        else Duration threshold breached
+            LM->>EventBus: LeaseDurationThresholdAlert
+        else Freezing threshold (cost > 90% maxSpend, if FREEZE_ACCOUNT action)
+            LM->>EventBus: LeaseFreezingThresholdAlert
+        end
 
-**Recovery**:
-- Manual admin action: Account allocation
-- Or: Automated cleanup task (daily) to find orphaned leases
-- Transition to ApprovalDenied + notify user
+        LM->>DDB: Update lease (totalCostAccrued, lastCheckedDate)
+    end
+```
+
+### Alert-to-Action Mapping
+
+| Alert Event | Current State | Action | New State |
+|-------------|---------------|--------|-----------|
+| `LeaseBudgetExceeded` | Active/Frozen | Terminate lease, queue cleanup | BudgetExceeded |
+| `LeaseExpired` | Active/Frozen | Terminate lease, queue cleanup | Expired |
+| `LeaseBudgetThresholdAlert` | Active | Send notification only | Active (unchanged) |
+| `LeaseDurationThresholdAlert` | Active | Send notification only | Active (unchanged) |
+| `LeaseFreezingThresholdAlert` | Active | Freeze account | Frozen |
+
+### Threshold Configuration
+
+Thresholds are defined per lease template:
+
+**Budget thresholds**: `[{ dollarsSpent: number, action: "ALERT" | "FREEZE_ACCOUNT" }]`
+- `ALERT`: Publishes `LeaseBudgetThresholdAlert` (notification only)
+- `FREEZE_ACCOUNT`: Publishes `LeaseFreezingThresholdAlert` (triggers freeze)
+
+**Duration thresholds**: `[{ hoursRemaining: number, action: "ALERT" | "FREEZE_ACCOUNT" }]`
+- Same action types as budget thresholds
+
+**Source**: `source/lambdas/account-management/lease-monitoring/src/lease-monitoring-handler.ts`
 
 ---
 
-## Performance Considerations
+## Phase 4: Lease Freeze and Unfreeze
 
-### Query Optimization
+### Freeze Flow
 
-| Query | Index Used | Performance |
-|-------|-----------|-------------|
-| Get lease by ID | Primary key (userEmail + uuid) | <1ms |
-| Find user's leases | Primary key scan | O(user leases) |
-| Find leases by status | StatusIndex GSI | O(leases in status) |
-| Find expiring leases | Primary key scan + filter | O(n) |
-| Cost aggregation | ScanTable | O(n) |
+```mermaid
+sequenceDiagram
+    participant User as Manager/Admin
+    participant Leases as Leases Lambda
+    participant DDB as DynamoDB
+    participant EB as ISBEventBus
+    participant ALM as Account Lifecycle Manager
+    participant Orgs as AWS Organizations
 
-### Throughput Limits
+    User->>Leases: POST /leases/{id}/freeze
+    Leases->>DDB: Update lease: Active → Frozen
+    Leases->>EB: Publish LeaseFrozen
 
-- **LeaseTable**: On-demand (scales automatically)
-- **LeaseMonitoring Lambda**: 1 per hour (bounded)
-- **API**: 10,000 req/min default (configurable)
-- **EventBridge**: 10/sec per account (native limit)
+    EB->>ALM: LeaseFrozen event
+    ALM->>Orgs: MoveAccount(Active OU → Frozen OU)
+    Note over ALM: Write Protection SCP NOT applied to Frozen OU<br/>but Restrictions SCP still limits services
+```
+
+### Unfreeze Flow
+
+```mermaid
+sequenceDiagram
+    participant User as Manager/Admin
+    participant Leases as Leases Lambda
+    participant DDB as DynamoDB
+    participant EB as ISBEventBus
+    participant ALM as Account Lifecycle Manager
+    participant Orgs as AWS Organizations
+
+    User->>Leases: POST /leases/{id}/unfreeze
+    Leases->>DDB: Update lease: Frozen → Active
+    Leases->>EB: Publish LeaseUnfrozen
+
+    EB->>ALM: LeaseUnfrozen event
+    ALM->>Orgs: MoveAccount(Frozen OU → Active OU)
+```
+
+Freezing preserves existing resources but the Frozen OU may have additional restrictions. Unfreezing restores full access. Both operations require Manager or Admin role.
+
+**Source**: `source/common/events/lease-frozen-event.ts`, `lease-unfrozen-event.ts`
 
 ---
 
-## Monitoring & Alerting
+## Phase 5: Lease Termination and Cleanup
 
-### Key Metrics
+### Termination Triggers
 
-- **Lease request latency** (p50, p99)
-- **Approval rate** (auto vs manual)
-- **Budget exceeded incidents** per day
-- **Cleanup success rate** (%)
-- **Average cleanup duration** (minutes)
-- **Cost per sandbox account** (daily)
+A lease enters a terminal state through three paths:
+1. **Manual termination**: `POST /leases/{id}/terminate` (Manager/Admin)
+2. **Budget exceeded**: Lease Monitoring detects `totalCostAccrued > maxSpend`
+3. **Duration expired**: Lease Monitoring detects `now > expirationDate`
 
-### CloudWatch Dashboards
+### Account Lifecycle Manager on Terminal Events
 
-- Lease lifecycle metrics
-- Account cleanup performance
-- Error rates by operation
-- Cost trends
+The Account Lifecycle Manager handles the tracked events `LeaseBudgetExceeded`, `LeaseExpired`, and processes the transition:
+
+1. Update lease record to terminal status (`Expired` / `BudgetExceeded` / `ManuallyTerminated`)
+2. Set `endDate` and `ttl` on the lease
+3. Revoke IDC access: `sso:DeleteAccountAssignment`
+4. Move account to CleanUp OU: `organizations:MoveAccount`
+5. Publish `CleanAccountRequest` event to trigger the cleanup Step Function
+
+### Account Cleaner Step Function
+
+```mermaid
+stateDiagram-v2
+    [*] --> AddResultsObject: CleanAccountRequest event
+
+    AddResultsObject --> InitializeCleanup: Pass state
+    InitializeCleanup --> SkipIfInProgress: Lambda invoke
+
+    SkipIfInProgress --> Success: cleanupAlreadyInProgress = true
+    SkipIfInProgress --> StartCodeBuild: Otherwise
+
+    StartCodeBuild --> AddSuccessful: BUILD SUCCESS
+    StartCodeBuild --> AddFailed: BUILD FAILURE
+
+    AddSuccessful --> EnoughSuccesses: Check count
+
+    EnoughSuccesses --> SendSuccessEvent: succeeded >= required
+    EnoughSuccesses --> SuccessRerunWait: More runs needed
+    SuccessRerunWait --> StartCodeBuild: Loop
+
+    SendSuccessEvent --> Success: AccountCleanupSucceeded
+
+    AddFailed --> EnoughFailures: Check count
+
+    EnoughFailures --> FailureRerunWait: failed < max retries
+    FailureRerunWait --> StartCodeBuild: Loop
+
+    EnoughFailures --> SendFailureEvent: Max retries exceeded
+    SendFailureEvent --> Failed: AccountCleanupFailed
+
+    Success --> [*]
+    Failed --> [*]
+```
+
+**Key parameters** (from Global AppConfig `cleanup` section):
+- `numberOfSuccessfulAttemptsToFinishCleanup`: Number of consecutive AWS Nuke successes required (default: 2)
+- `waitBeforeRerunSuccessfulAttemptSeconds`: Delay between successful runs (default: 30s)
+- `numberOfFailedAttemptsToCancelCleanup`: Max failures before quarantine (default: 3)
+- `waitBeforeRetryFailedAttemptSeconds`: Delay between failed retries (default: 5s)
+- Step Function total timeout: 12 hours
+- CodeBuild timeout: 60 minutes per run
+
+### AWS Nuke Execution
+
+CodeBuild runs an AWS Nuke container that:
+1. Assumes the `IntermediateRole` in the hub account
+2. Then assumes the `{namespace}_IsbCleanupRole` in the target sandbox account
+3. Loads nuke config from AppConfig (with placeholder substitution)
+4. Deletes all resources except those in the blocklist/filters
+5. Returns exit code to Step Functions
+
+**Protected resources** (from `nuke-config.yaml`):
+- CloudFormation StackSet instances (`StackSet-Isb-*`)
+- AWS Control Tower resources (trails, rules, roles, functions, logs)
+- SSO-related roles (`AWSReservedSSO_*`)
+- `OrganizationAccountAccessRole`
+- StackSet execution roles (`stacksets-exec-*`)
+- SAML providers (`AWSSSO`)
+- Config Service recorders/channels
+
+**Source**: `source/infrastructure/lib/components/account-cleaner/step-function.ts`, `cleanup-buildspec.yaml`, `source/infrastructure/lib/components/config/nuke-config.yaml`
+
+---
+
+## Phase 6: Post-Cleanup
+
+### On AccountCleanupSucceeded
+
+The Account Lifecycle Manager:
+1. Moves account from CleanUp OU to Available OU
+2. Resets the account record in SandboxAccountTable (clears lease association, sets status to `Available`)
+3. Account is now ready for the next lease
+
+### On AccountCleanupFailed
+
+The Account Lifecycle Manager:
+1. Moves account from CleanUp OU to Quarantine OU
+2. Updates account status to `Quarantine`
+3. Updates lease status to `AccountQuarantined`
+4. Publishes `AccountQuarantined` event
+5. Sends admin notification for manual review
+
+### Admin Recovery Options
+
+- **Retry cleanup**: `POST /accounts/{id}/retryCleanup` -- moves account back to CleanUp OU and re-triggers cleanup
+- **Eject account**: `POST /accounts/{id}/eject` -- moves account to Exit OU, removes from pool permanently
+
+---
+
+## Account OU Transition Diagram
+
+```mermaid
+graph LR
+    ENTRY["Entry OU<br/>(New accounts)"]
+    AVAILABLE["Available OU<br/>(Ready for lease)"]
+    ACTIVE["Active OU<br/>(Leased)"]
+    FROZEN["Frozen OU<br/>(Suspended)"]
+    CLEANUP["CleanUp OU<br/>(AWS Nuke running)"]
+    QUARANTINE["Quarantine OU<br/>(Failed cleanup)"]
+    EXIT["Exit OU<br/>(Decommissioned)"]
+
+    ENTRY -->|"Register + Cleanup"| CLEANUP
+    CLEANUP -->|"Nuke success"| AVAILABLE
+    AVAILABLE -->|"LeaseApproved"| ACTIVE
+    ACTIVE -->|"LeaseFrozen"| FROZEN
+    FROZEN -->|"LeaseUnfrozen"| ACTIVE
+    ACTIVE -->|"Terminal event"| CLEANUP
+    FROZEN -->|"Terminal event"| CLEANUP
+    CLEANUP -->|"Nuke failed (max retries)"| QUARANTINE
+    QUARANTINE -->|"Admin retryCleanup"| CLEANUP
+    QUARANTINE -->|"Admin eject"| EXIT
+    ACTIVE -->|"Admin eject"| EXIT
+```
+
+Each OU has specific SCPs applied:
+- **Available, CleanUp, Quarantine, Entry, Exit**: Write Protection SCP (blocks create/modify)
+- **Active**: Full access within allowed services and regions
+- **Frozen**: Full access but practically limited (no active user sessions)
+- **All OUs**: AWS Nuke Supported Services SCP, Restrictions SCP, Protect ISB SCP, Limit Regions SCP
+
+---
+
+## EventBridge Event Routing
+
+### Event-to-Lambda Routing
+
+| Event | Rule Target | Delivery | Concurrency |
+|-------|------------|----------|-------------|
+| `LeaseApproved`, `LeaseBudgetExceeded`, `LeaseExpired`, `AccountCleanupSucceeded`, `AccountCleanupFailed`, `AccountDriftDetected`, `LeaseFreezingThresholdAlert` | Account Lifecycle Manager | SQS -> Lambda | Reserved: 1 |
+| `CleanAccountRequest` | Account Cleaner Step Function | Direct | -- |
+| `LeaseRequested`, `LeaseApproved`, `LeaseDenied`, `LeaseTerminated`, `LeaseFrozen`, `LeaseUnfrozen`, alerts | Email Notification Lambda | SQS -> Lambda | -- |
+| All events | CloudWatch Logs | Direct | -- |
+
+The Account Lifecycle Manager uses reserved concurrency of 1 to ensure serialized processing of events, preventing race conditions in account OU transitions and DynamoDB updates.
+
+**Source**: `source/infrastructure/lib/components/events/isb-internal-core.ts`, `source/infrastructure/lib/components/account-management/account-lifecycle-management-lambda.ts`
+
+---
+
+## Error Handling and Recovery
+
+### SQS-based Retry Pattern
+
+Events routed through SQS queues benefit from:
+- **Visibility timeout**: Prevents re-processing during Lambda execution
+- **Max receive count**: 3 retries before DLQ
+- **Max event age**: 4 hours for lifecycle events
+- **DLQ**: Dead letter queue for manual investigation
+
+### Step Function Error Handling
+
+- The `InitializeCleanupLambda` invoke has a catch-all that publishes `AccountCleanupFailed`
+- The CodeBuild step has a catch-all that increments the failure counter and retries
+- The entire state machine has a 12-hour timeout
+
+### Idempotency
+
+- The `InitializeCleanupLambda` checks if cleanup is already in progress (by querying the `cleanupExecutionContext` on the account record) and skips if so
+- Lease state transitions use DynamoDB conditional writes to prevent conflicting updates
+
+---
+
+## DynamoDB Query Patterns
+
+| Query | Method | Key/Index | Filter |
+|-------|--------|-----------|--------|
+| Get lease by ID | Query | PK: `userEmail`, SK: `uuid` | -- |
+| User's leases | Query | PK: `userEmail` | Optional status filter |
+| Leases by status | Query | GSI `StatusIndex` PK: `status` | -- |
+| Available accounts | Scan | -- | `status = "Available"` |
+| Account by ID | GetItem | PK: `awsAccountId` | -- |
+| Template by ID | GetItem | PK: `uuid` | -- |
+
+Note: The `StatusIndex` GSI on LeaseTable uses `status` as partition key and `originalLeaseTemplateUuid` as sort key, enabling efficient queries for all leases in a given state.
+
+---
+
+## Related Documentation
+
+- [10-isb-core-architecture.md](./10-isb-core-architecture.md) -- CDK stacks, Lambda catalog, API endpoints
+- [12-isb-frontend.md](./12-isb-frontend.md) -- Frontend UI for lease management
+- [13-isb-customizations.md](./13-isb-customizations.md) -- CDDO extensions (Costs, Deployer, Approver)
+- [05-service-control-policies.md](./05-service-control-policies.md) -- SCP analysis per OU
+
+---
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

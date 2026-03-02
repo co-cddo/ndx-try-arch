@@ -1,91 +1,496 @@
 {
   "$schema": "quality-report.schema.json",
-  "generatedAt": null,
+  "generatedAt": "2026-03-02T23:44:37.858050+00:00",
   "promptVersion": "2.0",
-
   "summary": {
-    "totalDocuments": 0,
-    "passedDocuments": 0,
+    "totalDocuments": 37,
+    "passedDocuments": 37,
     "failedDocuments": 0,
-    "totalIssues": 0,
-    "criticalIssues": 0,
-    "overallScore": null
+    "totalWords": 65768,
+    "totalDiagrams": 115,
+    "overallScore": 100.0
   },
-
-  "gates": {
-    "structure": {
-      "description": "Document structure validation",
-      "passed": null,
-      "checks": [
-        { "rule": "has_h1_title", "required": true, "passed": null },
-        { "rule": "has_executive_summary", "required": true, "passed": null },
-        { "rule": "has_version_metadata", "required": true, "passed": null },
-        { "rule": "max_heading_depth", "value": 4, "passed": null }
-      ]
-    },
-    "content": {
-      "description": "Content quality validation",
-      "passed": null,
-      "checks": [
-        { "rule": "min_word_count", "value": 300, "passed": null },
-        { "rule": "has_mermaid_diagram", "required": true, "passed": null },
-        { "rule": "no_todo_placeholders", "required": true, "passed": null },
-        { "rule": "no_broken_links", "required": true, "passed": null },
-        { "rule": "cites_sources", "required": true, "passed": null }
-      ]
-    },
-    "coverage": {
-      "description": "Documentation coverage validation",
-      "passed": null,
-      "checks": [
-        { "rule": "all_repos_documented", "required": true, "passed": null },
-        { "rule": "all_accounts_documented", "required": true, "passed": null },
-        { "rule": "all_scps_documented", "required": true, "passed": null },
-        { "rule": "no_orphan_docs", "required": true, "passed": null }
-      ]
-    },
-    "mermaid": {
-      "description": "Mermaid diagram validation",
-      "passed": null,
-      "checks": [
-        { "rule": "valid_syntax", "required": true, "passed": null },
-        { "rule": "renders_without_error", "required": true, "passed": null },
-        { "rule": "no_undefined_nodes", "required": true, "passed": null }
-      ]
-    }
-  },
-
   "documentResults": {
-    "_comment": "Populated during validation phase. Maps document filename to validation results.",
-    "_example": {
-      "passed": null,
-      "score": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "issues": [],
+    "00-repo-inventory.md": {
+      "passed": true,
+      "wordCount": 1737,
+      "diagramCount": 1,
       "gates": {
-        "structure": { "passed": null, "failures": [] },
-        "content": { "passed": null, "failures": [] },
-        "mermaid": { "passed": null, "failures": [] }
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
       }
-    }
-  },
-
-  "coverageResults": {
-    "repositories": {
-      "documented": [],
-      "missing": [],
-      "coverage": null
     },
-    "awsAccounts": {
-      "documented": [],
-      "missing": [],
-      "coverage": null
+    "01-upstream-analysis.md": {
+      "passed": true,
+      "wordCount": 1043,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
     },
-    "scps": {
-      "documented": [],
-      "missing": [],
-      "coverage": null
+    "02-aws-organization.md": {
+      "passed": true,
+      "wordCount": 1085,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "03-hub-account-resources.md": {
+      "passed": true,
+      "wordCount": 1186,
+      "diagramCount": 1,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "04-cross-account-trust.md": {
+      "passed": true,
+      "wordCount": 1178,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "05-service-control-policies.md": {
+      "passed": true,
+      "wordCount": 1784,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "10-isb-core-architecture.md": {
+      "passed": true,
+      "wordCount": 3358,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "11-lease-lifecycle.md": {
+      "passed": true,
+      "wordCount": 2238,
+      "diagramCount": 8,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "12-isb-frontend.md": {
+      "passed": true,
+      "wordCount": 2507,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "13-isb-customizations.md": {
+      "passed": true,
+      "wordCount": 3412,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "20-approver-system.md": {
+      "passed": true,
+      "wordCount": 1477,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "21-billing-separator.md": {
+      "passed": true,
+      "wordCount": 1191,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "22-cost-tracking.md": {
+      "passed": true,
+      "wordCount": 1146,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "23-deployer.md": {
+      "passed": true,
+      "wordCount": 1175,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "24-utils.md": {
+      "passed": true,
+      "wordCount": 1368,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "30-ndx-website.md": {
+      "passed": true,
+      "wordCount": 1954,
+      "diagramCount": 1,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "31-signup-flow.md": {
+      "passed": true,
+      "wordCount": 1538,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "32-scenarios-microsite.md": {
+      "passed": true,
+      "wordCount": 2314,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "40-lza-configuration.md": {
+      "passed": true,
+      "wordCount": 2577,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "41-terraform-scp.md": {
+      "passed": true,
+      "wordCount": 2180,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "42-terraform-resources.md": {
+      "passed": true,
+      "wordCount": 1026,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "43-ndx-try-aws-isb.md": {
+      "passed": true,
+      "wordCount": 755,
+      "diagramCount": 1,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "50-github-actions-inventory.md": {
+      "passed": true,
+      "wordCount": 2141,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "51-oidc-configuration.md": {
+      "passed": true,
+      "wordCount": 1442,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "52-deployment-flows.md": {
+      "passed": true,
+      "wordCount": 1697,
+      "diagramCount": 15,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "53-manual-operations.md": {
+      "passed": true,
+      "wordCount": 1810,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "60-auth-architecture.md": {
+      "passed": true,
+      "wordCount": 1936,
+      "diagramCount": 4,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "61-encryption.md": {
+      "passed": true,
+      "wordCount": 1501,
+      "diagramCount": 1,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "62-secrets-management.md": {
+      "passed": true,
+      "wordCount": 1612,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "63-compliance.md": {
+      "passed": true,
+      "wordCount": 2413,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "70-data-flows.md": {
+      "passed": true,
+      "wordCount": 1817,
+      "diagramCount": 5,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "71-external-integrations.md": {
+      "passed": true,
+      "wordCount": 1867,
+      "diagramCount": 4,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "72-repo-dependencies.md": {
+      "passed": true,
+      "wordCount": 1786,
+      "diagramCount": 3,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "80-c4-architecture.md": {
+      "passed": true,
+      "wordCount": 1570,
+      "diagramCount": 5,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "81-aws-architecture.md": {
+      "passed": true,
+      "wordCount": 1639,
+      "diagramCount": 6,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "82-process-flows.md": {
+      "passed": true,
+      "wordCount": 2027,
+      "diagramCount": 7,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "90-issues-discovered.md": {
+      "passed": true,
+      "wordCount": 2281,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
     }
   }
 }
