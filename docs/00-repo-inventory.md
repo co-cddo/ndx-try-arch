@@ -1,629 +1,314 @@
-# Repository Inventory for NDX Try Architecture
+# Repository Inventory
 
-**Generated:** 2026-02-03
-**Total Repositories:** 12
-**Survey Scope:** IaC types, entry points, GitHub workflows, documentation, and architecture components
-
----
+> **Last Updated**: 2026-03-02
+> **Source**: [co-cddo GitHub Organisation](https://github.com/co-cddo)
+> **Total Repositories**: 13
 
 ## Executive Summary
 
-This document provides a comprehensive inventory of all 12 repositories that comprise the NDX (National Digital Exchange) and Innovation Sandbox on AWS ecosystem. The system implements a sophisticated AWS multi-account cloud platform for UK local government experimentation with AWS services.
+The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 repositories under the `co-cddo` GitHub organisation. These repositories collectively implement a multi-account AWS sandbox platform for UK local government experimentation, comprising a forked upstream AWS Solution, custom satellite Lambda services, a Terraform-managed cost defence layer, Landing Zone Accelerator configuration, scenario content platforms, and supporting utilities.
 
 ---
 
 ## Summary Table
 
-| Repository | Type | IaC | Docs | Workflows | Status |
+| Repository | Language | IaC | Archived | Last Push | Role |
 |---|---|---|---|---|---|
-| innovation-sandbox-on-aws | TypeScript/Node.js | CDK + CloudFormation | ✓ | None | Core Platform |
-| innovation-sandbox-on-aws-approver | TypeScript/Node.js | CDK | ✓ | Deploy | Satellite |
-| innovation-sandbox-on-aws-billing-seperator | TypeScript/Node.js | CDK | None | CI/Deploy | **Temporary Workaround** |
-| innovation-sandbox-on-aws-costs | TypeScript/Node.js | CDK | ✓ | CI/Deploy | Satellite |
-| innovation-sandbox-on-aws-deployer | TypeScript/Node.js | CDK | ✓ | CI | Satellite |
-| innovation-sandbox-on-aws-utils | Python | Scripts | None | None | Utility |
-| ndx | TypeScript/Node.js | Eleventy + CDK | ✓ | CI/Infra/Test | Web Platform |
-| ndx_try_aws_scenarios | TypeScript/Node.js | CloudFormation | ✓ | Build/Deploy | Scenario Platform |
-| ndx-try-aws-isb | Empty | None | None | None | **Placeholder/Archive** |
-| ndx-try-aws-lza | YAML Config | Landing Zone Accelerator | None | None | Infrastructure Config |
-| ndx-try-aws-scp | Terraform | Cost Defense | ✓ | Terraform | Security/Cost Control |
-| ndx-try-aws-terraform | Terraform | Organization | None | None | Infrastructure Config |
+| innovation-sandbox-on-aws | TypeScript | CDK + CFN | No | 2026-02-28 | Core ISB platform (fork) |
+| innovation-sandbox-on-aws-approver | TypeScript | CDK | No | 2026-03-02 | Lease approval scoring |
+| innovation-sandbox-on-aws-billing-seperator | TypeScript | CDK | No | 2026-03-02 | 72h billing cooldown |
+| innovation-sandbox-on-aws-client | TypeScript | -- | No | 2026-02-28 | ISB API client library |
+| innovation-sandbox-on-aws-costs | TypeScript | CDK | No | 2026-03-02 | Lease cost collection |
+| innovation-sandbox-on-aws-deployer | TypeScript | CDK | **Yes** | 2026-02-28 | Scenario deployer (archived) |
+| innovation-sandbox-on-aws-utils | Python | Scripts | No | 2026-03-02 | Pool account tooling |
+| ndx | TypeScript | CDK + Eleventy | No | 2026-03-02 | NDX public website |
+| ndx_try_aws_scenarios | TypeScript | CFN + Eleventy | No | 2026-03-02 | Scenario microsite + CFN |
+| ndx-try-aws-isb | -- | -- | No | 2025-11-21 | Placeholder (empty) |
+| ndx-try-aws-lza | YAML | LZA | No | 2025-12-19 | Landing Zone config |
+| ndx-try-aws-scp | Terraform | Terraform | No | 2026-03-02 | Cost defence SCPs + budgets |
+| ndx-try-aws-terraform | Terraform | Terraform | No | 2026-02-28 | Org-level Terraform glue |
 
 ---
 
-## Detailed Repository Findings
+## Detailed Repository Profiles
 
 ### 1. innovation-sandbox-on-aws
 
-**Purpose:** Core Innovation Sandbox on AWS solution - enables cloud administrators to set up and recycle temporary sandbox environments with automated security, governance, spend management, and account recycling.
+| Property | Value |
+|---|---|
+| **SHA** | `cf75b87` |
+| **Origin** | Fork of [aws-solutions/innovation-sandbox-on-aws](https://github.com/aws-solutions/innovation-sandbox-on-aws) |
+| **Description** | Core Innovation Sandbox on AWS solution -- manages temporary sandbox environments with automated security, governance, spend controls, and account recycling via a web UI |
+| **Language** | TypeScript (98.6%) |
+| **IaC** | AWS CDK synthesised to CloudFormation |
+| **Workflows** | None |
 
-**Key Features:**
-- Web-based UI for managing sandbox accounts
-- Automated security and governance policy implementation
-- Account recycling/cleanup mechanisms
-- Support for multiple deployment scenarios
+**Key Files**: `source/infrastructure/lib/` (CDK stacks: AccountPool, IDC, Data, Compute, SandboxAccount), `source/frontend/` (Vite web UI), `source/lambdas/` (API handlers), `deployment/` (build scripts), `docs/openapi/` (API spec v1.1.4).
 
-**IaC Type:** TypeScript/Node.js with CDK and CloudFormation
-- Entry Points: `deployment/` directory (build scripts)
-- Main: `package.json` (AWS CDK configuration)
-- CDK stacks: Located in `source/infrastructure/`
-
-**GitHub Actions Workflows:** None configured
-
-**Documentation:**
-- Location: `/docs/`
-  - `diagrams/` - Architecture diagrams
-  - `openapi/` - API specifications
-- README: Comprehensive with deployment guides, prerequisites, environment setup
-
-**Key Files:**
-- `package.json` - Dependencies and scripts
-- `.env.example` - Environment variable template
-- `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`
-- `.pre-commit-config.yaml` - Code quality controls
-
-**Architecture:** Multi-stack CloudFormation deployment (AccountPool, IDC, Data, Compute stacks)
+**Architecture**: Four CloudFormation stacks -- AccountPool (org management account, OU/SCP lifecycle), IDC (IAM Identity Center integration), Data (DynamoDB tables, AppConfig), Compute (Lambda functions, API Gateway, Step Functions, EventBridge, CloudFront frontend).
 
 ---
 
 ### 2. innovation-sandbox-on-aws-approver
 
-**Purpose:** Automated lease approval system for Innovation Sandbox using intelligent risk scoring (19-rule scoring engine).
+| Property | Value |
+|---|---|
+| **SHA** | `be062e7` |
+| **Description** | Score-based lease approval system using a 19-rule scoring engine |
+| **Language** | TypeScript |
+| **IaC** | AWS CDK (`cdk/`) |
+| **Workflows** | `deploy.yml` |
 
-**Key Features:**
-- Score-based approval with 80%+ instant approval target
-- Domain verification (UK local government domains)
-- AI-powered email analysis (Amazon Bedrock - Nova Micro)
-- Business hours & queue management
-- Slack Workflow notifications for manual escalations
-- Less than 5% false negative rate for malicious requests
+**Purpose**: Listens for `LeaseRequested` EventBridge events and automatically approves or escalates lease requests. Implements domain verification for UK local government email addresses, AI-powered email analysis via Amazon Bedrock (Nova Micro), and Slack Workflow notifications for manual escalation. Targets 80%+ instant approval with less than 5% false negative rate.
 
-**IaC Type:** TypeScript/Node.js with AWS CDK
-- Entry Points:
-  - `cdk/` - CDK infrastructure
-  - `src/` - Lambda handler implementation
-- Main: `dist/handler.js`
-- CDK Config: `cdk.json`
-
-**GitHub Actions Workflows:**
-- `deploy.yml` - Deployment pipeline
-
-**Documentation:**
-- Location: `/docs/`
-  - `approver-access-management.md` - Permission management
-  - `operator-onboarding-canvas.md` - Operator training
-  - `runbooks/` - Operational procedures
-- README: Detailed explaining risk scoring, features, configuration
-
-**Architecture:**
-- EventBridge listener for `LeaseRequested` events
-- Lambda-based scoring engine
-- DynamoDB storage for configuration
-- Slack integration for operator notifications
+**Key Files**: `src/` (Lambda handler), `cdk/` (CDK stack), `docs/runbooks/` (operational procedures).
 
 ---
 
 ### 3. innovation-sandbox-on-aws-billing-seperator
 
-**Purpose:** **⚠️ TEMPORARY WORKAROUND** for billing attribution and quota exhaustion issues. Enforces 72-hour hard cooldown on sandbox accounts. Should be archived once native cooldown support is added to ISB (tracking issue #70).
+| Property | Value |
+|---|---|
+| **SHA** | `f8f1bdc` |
+| **Description** | Quarantines sandbox accounts for 72 hours after cleanup to ensure billing separation |
+| **Language** | TypeScript |
+| **IaC** | AWS CDK (`lib/hub-stack.ts`, `lib/org-mgmt-stack.ts`) |
+| **Workflows** | `deploy.yml`, `pr-check.yml` |
 
-**Key Features:**
-- Hard 72-hour quarantine for billing period boundaries
-- CloudTrail-triggered account quarantine
-- EventBridge cross-account event routing
-- SQS queue for processing
-- Org management account integration
-
-**IaC Type:** TypeScript/Node.js with AWS CDK
-- Entry Points:
-  - `bin/` - CDK entry point
-  - `lib/` - Stack implementations (hub-stack.ts, org-mgmt-stack.ts)
-- CDK Config: `cdk.json`, `cdk.context.example.json`
-
-**GitHub Actions Workflows:**
-- `deploy.yml` - Deployment
-- `pr-check.yml` - Pull request validation
-
-**Documentation:**
-- Location: No /docs directory
-- README: Explains architecture, explains when to delete
-
-**Architecture:**
-- Cross-account EventBridge rule forwarding
-- Custom event bus in hub account
-- EventBridge rule → SQS → Lambda for account quarantine
-
-**Status:** DEPRECATED - Awaiting archival once ISB issue #70 is resolved
+**Purpose**: Temporary workaround for billing attribution issues. Enforces a 72-hour hard cooldown on sandbox accounts via CloudTrail-triggered quarantine. Cross-account EventBridge routing from org management to hub account. Should be archived once ISB issue #70 is resolved.
 
 ---
 
-### 4. innovation-sandbox-on-aws-costs
+### 4. innovation-sandbox-on-aws-client
 
-**Purpose:** Event-driven lease cost collection service. Automatically collects billing data when Innovation Sandbox leases terminate, storing reports in S3 with presigned URLs.
+| Property | Value |
+|---|---|
+| **SHA** | `7250ce7` |
+| **Description** | Lightweight HTTP client for the ISB API |
+| **Language** | TypeScript |
+| **IaC** | None (library package) |
+| **Workflows** | None |
 
-**Key Features:**
-- Triggered by `LeaseTerminated` events
-- 24-hour delay for billing data settlement
-- Cross-account Cost Explorer access (assumes role in org management)
-- JWT authentication for Lambda-to-Lambda calls
-- CSV cost report generation with presigned URLs
-- 3-year S3 retention policy
-- 7-day valid presigned URL generation
-
-**IaC Type:** TypeScript/Node.js
-- Entry Points:
-  - `infra/` - CDK infrastructure stacks
-  - `src/` - Lambda handler implementation
-
-**GitHub Actions Workflows:**
-- `ci.yml` - Continuous integration
-- `deploy.yml` - Deployment pipeline
-
-**Documentation:**
-- Location: `/docs/`
-  - `api-contracts.md` - Event schema documentation
-  - `TESTING.md` - Test procedures
-
-**Architecture:**
-- EventBridge rule triggered on LeaseTerminated
-- Scheduler Lambda creates one-shot schedule (24hr delay)
-- Cost Collector Lambda queries Cost Explorer
-- S3 bucket storage with lifecycle policies
-- Cross-account IAM role assumption
+**Purpose**: Provides typed methods for ISB API operations (leases, accounts, templates) with JWT authentication, token caching, and automatic renewal. Distributed as a tarball via GitHub Releases (`@co-cddo/isb-client`). Used by satellite services (approver, costs, billing-separator) to interact with the ISB API.
 
 ---
 
-### 5. innovation-sandbox-on-aws-deployer
+### 5. innovation-sandbox-on-aws-costs
 
-**Purpose:** AWS Lambda function that auto-deploys CloudFormation templates and CDK applications to sandbox sub-accounts when leases are approved.
+| Property | Value |
+|---|---|
+| **SHA** | `cf659bb` |
+| **Description** | Event-driven lease cost collection service |
+| **Language** | TypeScript |
+| **IaC** | CDK (`infra/`) |
+| **Workflows** | `ci.yml`, `deploy.yml` |
 
-**Key Features:**
-- Event-driven deployment on LeaseApproved events
-- **CDK scenario auto-detection** (cdk.json presence check)
-- Sparse cloning from GitHub (efficient bandwidth)
-- CDK synthesis to CloudFormation
-- Parameter enrichment from DynamoDB
-- Cross-account STS role assumption
-- Success/failure event emission
+**Purpose**: Triggered by `LeaseTerminated` EventBridge events. Waits 24 hours for billing data settlement, then queries Cost Explorer via cross-account role assumption in the org management account. Generates CSV cost reports stored in S3 with 3-year retention and 7-day presigned URL access. Uses JWT authentication for Lambda-to-Lambda API calls.
 
-**IaC Type:** TypeScript/Node.js with CDK
-- Entry Points:
-  - `infrastructure/` - CDK infrastructure
-  - `src/` - Lambda handler implementation
-
-**GitHub Actions Workflows:**
-- `ci.yml` - Continuous integration
-
-**Documentation:**
-- Location: `/docs/`
-  - `architecture-innovation-sandbox-on-aws-deployer-2025-12-03.md`
-  - `prd-innovation-sandbox-on-aws-deployer-2025-12-03.md`
-  - `product-brief-deployment-extension-2025-12-04.md`
-  - `sprint-plan-innovation-sandbox-on-aws-deployer-2025-12-03.md`
-
-**Architecture:**
-- EventBridge source account (hub)
-- GitHub API integration for CDK detection
-- Sparse git clone for CDK projects
-- npm ci --ignore-scripts for secure dependency installation
-- CloudFormation stack deployment in target accounts
-- DynamoDB parameter enrichment from lease data
-
-**Special Capability:** Supports both CDK (TypeScript/JavaScript) and CloudFormation templates with automatic detection
+**Key Files**: `src/` (Lambda handlers), `infra/` (CDK stacks), `docs/api-contracts.md` (event schemas).
 
 ---
 
-### 6. innovation-sandbox-on-aws-utils
+### 6. innovation-sandbox-on-aws-deployer
 
-**Purpose:** Utility scripts for managing the Innovation Sandbox ecosystem.
+| Property | Value |
+|---|---|
+| **SHA** | `c2a85a0` |
+| **Description** | Lambda that deploys CloudFormation templates to sandbox sub-accounts when leases are approved |
+| **Language** | TypeScript |
+| **IaC** | CDK (`infrastructure/`) |
+| **Workflows** | `ci.yml` |
+| **Status** | **ARCHIVED** -- superseded by ISB blueprint pattern |
 
-**Key Features:**
-- Python-based pool account creation automation
-- SSO authentication handling
-- Sequential pool account naming (pool-001, pool-002, etc.)
-- Integration with Innovation Sandbox Lambda for account registration
-- Billing view management
-- Status polling for account cleanup completion
-
-**IaC Type:** Pure Python Scripts
-- Entry Point: `create_sandbox_pool_account.py`
-- No CDK/CloudFormation
-
-**GitHub Actions Workflows:** None
-
-**Documentation:**
-- Location: No /docs directory
-- README: Comprehensive usage guide with step-by-step examples
-
-**Key Functionality:**
-1. SSO Authentication validation
-2. Pool account enumeration
-3. Account creation via AWS Organizations
-4. OU placement (Entry → Ready via cleanup)
-5. Billing view registration
-6. ISB Lambda invocation for registration
-7. Status polling with configurable timeouts
-
-**Architecture:** Direct AWS SDK (boto3) calls with SSO profiles
+**Purpose**: Event-driven deployment triggered on `LeaseApproved` events. Supported both CDK (auto-detection via `cdk.json`) and CloudFormation templates. Used sparse GitHub cloning for bandwidth efficiency. Now archived in favour of native ISB blueprint deployment.
 
 ---
 
-### 7. ndx
+### 7. innovation-sandbox-on-aws-utils
 
-**Purpose:** National Digital Exchange (NDX) website - informational platform describing the NDX initiative using static site generation.
+| Property | Value |
+|---|---|
+| **SHA** | `aa7e781` |
+| **Description** | Python utilities for managing Innovation Sandbox pool accounts |
+| **Language** | Python |
+| **IaC** | None (scripts) |
+| **Workflows** | CI workflow |
 
-**Key Features:**
-- Static site with Eleventy (11ty) v3.x
-- GOV.UK Frontend design system
-- Discover section (news, events, case studies)
-- Cloud services catalogue
-- Access request system
-- Cloud Maturity Model and Assessment Tool
-- Comprehensive accessibility testing
-
-**IaC Type:** TypeScript/Node.js with Eleventy + AWS CDK for infrastructure
-- Entry Points:
-  - `src/` - Website source files (templates, assets, data)
-  - `infra/` - AWS CDK infrastructure
-  - `lib/` - TypeScript libraries
-- Package Manager: Yarn
-
-**GitHub Actions Workflows:**
-- `accessibility.yml` - Pa11y/accessibility testing
-- `ci.yaml` - Continuous integration
-- `infra.yaml` - Infrastructure deployment
-- `scorecard.yml` - OpenSSF scorecard
-- `test.yml` - Unit/component testing
-
-**Documentation:**
-- Location: `/docs/`
-  - `accessibility-audit.md` - WCAG compliance audit
-  - `adr/` - Architecture Decision Records
-  - `architecture.md` - System architecture
-  - `component-inventory.md` - GOV.UK components used
-  - `development-guide.md` - Developer guide
-  - `govuk-component-audit.md` - GOV.UK audit results
-  - `infrastructure-architecture.md` - Infrastructure design
-  - `index.md` - Documentation index
-
-**Testing:**
-- Unit tests (Jest)
-- E2E tests (Playwright)
-- Accessibility testing (Pa11y)
-- Lighthouse CI performance testing
-
-**Architecture:** Eleventy static site with AWS CDK infrastructure for hosting
+**Purpose**: Operational scripts for pool account lifecycle: `create_sandbox_pool_account.py` (sequential account creation via AWS Organizations), `assign_lease.py`, `terminate_lease.py`, `force_release_account.py`, `create_user.py`, `clean_console_state.py`. Uses boto3 with SSO profiles.
 
 ---
 
-### 8. ndx_try_aws_scenarios
+### 8. ndx
 
-**Purpose:** Zero-cost AWS evaluation platform for UK local government with 6+ pre-built scenarios for hands-on cloud exploration.
+| Property | Value |
+|---|---|
+| **SHA** | `a5bf368` |
+| **Description** | National Digital Exchange public website |
+| **Language** | TypeScript / Eleventy v3.x |
+| **IaC** | CDK (`infra/`) |
+| **Workflows** | `ci.yaml`, `infra.yaml`, `test.yml`, `accessibility.yml`, `scorecard.yml` |
 
-**Key Features:**
-- 7 Scenarios: Council Chatbot, Planning AI, FOI Redaction, Smart Car Park, Text to Speech, QuickSight Dashboard, LocalGov Drupal
-- One-click CloudFormation deployment
-- Innovation Sandbox integration
-- Evidence pack generation (committee-ready PDFs with ROI analysis)
-- GOV.UK Design System (WCAG 2.2 AA compliant)
-- Fully free/zero-cost
+**Purpose**: Static GOV.UK Design System website describing the NDX initiative. Includes Discover section (news, events, case studies), cloud services catalogue, access request system, Cloud Maturity Model and Assessment Tool. WCAG 2.2 AA compliant with Pa11y, Playwright, Lighthouse CI testing.
 
-**IaC Type:** TypeScript/Node.js with Eleventy + CloudFormation Templates
-- Entry Points:
-  - `src/` - Website source (Eleventy templates, assets)
-  - `cloudformation/` - AWS deployment templates
-    - `scenarios/` - Per-scenario templates (7 scenarios)
-    - `functions/` - Lambda functions
-    - `layers/` - Lambda layers
-    - `screenshot-automation/` - Automation for evidence packs
-- CloudFormation Files: 275+ template files across scenarios
-
-**GitHub Actions Workflows:**
-- `build-deploy.yml` - Build and deploy pipeline
-- `docker-build.yml` - Docker container builds
-
-**Documentation:**
-- Location: `/docs/`
-  - `deployment-endpoints.yaml` - Service endpoints
-  - `documentation-standards.md` - Writing guide
-  - `epic-25-tech-spec.md` - Technical specifications
-  - `localgov-drupal-cdk-notes.md` - Drupal-specific notes
-  - `ops/` - Operational procedures
-  - `prd-*.md` - Product requirements
-  - `screenshot-pipeline-architecture.md` - Evidence pack generation
-  - `screenshots/` - Screenshot collections
-  - `templates/` - Documentation templates
-
-**Scenarios Deployed:**
-1. `council-chatbot` - 24/7 AI resident support
-2. `foi-redaction` - Sensitive data redaction
-3. `localgov-drupal` - Full Drupal stack
-4. `planning-ai` - Planning application processing
-5. `quicksight-dashboard` - Service analytics
-6. `smart-car-park` - IoT parking availability
-7. `text-to-speech` - Accessibility audio generation
+**Key Files**: `src/` (templates, assets), `infra/` (CDK stack for CloudFront/S3 hosting), `docs/adr/` (Architecture Decision Records).
 
 ---
 
-### 9. ndx-try-aws-isb
+### 9. ndx_try_aws_scenarios
 
-**Purpose:** **⚠️ EMPTY/PLACEHOLDER** repository for Innovation Sandbox configuration.
+| Property | Value |
+|---|---|
+| **SHA** | `fcb5c08` |
+| **Description** | Zero-cost AWS evaluation platform for UK local government |
+| **Language** | TypeScript / Eleventy |
+| **IaC** | CloudFormation (275+ templates in `cloudformation/scenarios/`) |
+| **Workflows** | `build-deploy.yml`, `docker-build.yml` |
 
-**Status:** EMPTY/PLACEHOLDER
-- Only contains: `.git/`, `.gitignore`, `LICENSE`
-- No source code
-- No documentation
-- No workflows
-
-**Note:** ISB files are in separate repositories (innovation-sandbox-on-aws, etc.)
-
----
-
-### 10. ndx-try-aws-lza
-
-**Purpose:** Landing Zone Accelerator (LZA) configuration files for NDX:Try AWS environment structure.
-
-**Key Features:**
-- AWS LZA v1.1.0 configuration
-- Organizational account structure via YAML
-- Multi-account governance setup
-- OU definitions for Innovation Sandbox accounts
-- Service Control Policies configuration
-- IAM policies and roles
-- Network configuration
-
-**IaC Type:** AWS Landing Zone Accelerator - YAML Configuration
-- Configuration Files:
-  - `accounts-config.yaml` - Account definitions
-  - `global-config.yaml` - Global settings
-  - `iam-config.yaml` - IAM configuration
-  - `network-config.yaml` - Network setup
-  - `organization-config.yaml` - Organization structure
-  - `replacements-config.yaml` - Variable replacements
-  - `security-config.yaml` - Security settings
-
-**Directory Structure:**
-- `backup-policies/` - Backup service policies
-- `declarative-policies/` - Custom declarative policies
-- `dynamic-partitioning/` - Dynamic partition configs
-- `event-bus-policies/` - EventBridge policies
-- `iam-policies/` - IAM policy definitions
-- `rcp-policies/` - Resource Control Policies
-- `service-control-policies/` - SCPs configuration
-
-**GitHub Actions Workflows:** None
-
-**Documentation:**
-- Location: No /docs directory
-- README: Brief explaining LZA usage
-- Recent Updates documented in README (v1.0.0 → v1.1.0)
-
-**Recent Changes (per README):**
-- 2025-12-19: Upgraded to LZA v1.1.0
-- 2025-12-15: Directory restructuring for GitHub configuration
-- 2025-11-17: OUs added for InnovationSandbox
+**Purpose**: Provides 7 pre-built scenarios for hands-on cloud exploration: Council Chatbot, Planning AI, FOI Redaction, Smart Car Park, Text to Speech, QuickSight Dashboard, LocalGov Drupal. Each scenario has one-click CloudFormation deployment and evidence pack generation (committee-ready PDFs with ROI analysis).
 
 ---
 
-### 11. ndx-try-aws-scp
+### 10. ndx-try-aws-isb
 
-**Purpose:** Comprehensive cost defense system using 5-layer defense-in-depth architecture to protect against cost attacks in 24-hour sandbox leases.
-
-**Key Features:**
-- **5 Defense Layers:**
-  1. Service Control Policies (prevention)
-  2. Service Quotas (hard limits)
-  3. AWS Budgets (detection with aggressive alerting)
-  4. Cost Anomaly Detection (ML-based)
-  5. DynamoDB Billing Enforcer (auto-remediation)
-
-- **Cost Protection:**
-  - $50/day limit with 10%, 50%, 100% alerts
-  - $1000/month budget
-  - 10 service-specific budgets (CloudWatch, Lambda, DynamoDB, Bedrock, etc.)
-  - EC2 instance type allowlist (t2, t3, t3a, m5, m6i)
-  - GPU/accelerated instance blocking
-  - 20+ expensive services blocked (SageMaker, EMR, Redshift, MSK)
-
-**IaC Type:** Terraform
-- Entry Points:
-  - `environments/` - Deployment environments
-    - `ndx-production/` - Production configuration
-  - `modules/` - Reusable Terraform modules
-    - `scp-manager/` - Service Control Policy management
-    - `service-quotas-manager/` - Service quota templates
-    - `budgets-manager/` - AWS Budget configurations
-    - `cost-anomaly-detection/` - Cost anomaly detection setup
-    - `dynamodb-billing-enforcer/` - DynamoDB enforcement Lambda
-
-**GitHub Actions Workflows:**
-- `terraform.yaml` - Terraform deployment/validation
-
-**Documentation:**
-- Location: `/docs/`
-  - `EVENTBRIDGE_EVENTS.md` - Event schemas
-  - `GITHUB_ACTIONS_SETUP.md` - CI/CD setup
-  - `SCP_CONSOLIDATION_ANALYSIS.md` - Policy analysis
-
-**Test Coverage:** `tests/` directory with Terraform validation tests
+| Property | Value |
+|---|---|
+| **SHA** | `70bb7ec` |
+| **Description** | Empty placeholder repository |
+| **Status** | Contains only `.git/`, `.gitignore`, `LICENSE` |
 
 ---
 
-### 12. ndx-try-aws-terraform
+### 11. ndx-try-aws-lza
 
-**Purpose:** General Terraform configuration for NDX:Try AWS organization management.
+| Property | Value |
+|---|---|
+| **SHA** | `6d70ae3` |
+| **Description** | Landing Zone Accelerator v1.1.0 configuration for NDX:Try AWS |
+| **Language** | YAML |
+| **IaC** | AWS LZA |
+| **Workflows** | None |
 
-**Key Features:**
-- S3 bucket provisioning for remote Terraform state
-- Billing data visibility management
-- AWS organization configuration
+**Purpose**: Defines the entire AWS Organization structure, OU hierarchy, account definitions, IAM policies, network config, security settings, service control policies, and backup policies. Seven core YAML config files plus policy directories.
 
-**IaC Type:** Terraform (minimal configuration)
-- Files:
-  - `main.tf` - Primary resource definitions
-  - `terraform.tf` - Terraform and provider configuration
-  - `.terraform.lock.hcl` - Dependency lock file
-
-**GitHub Actions Workflows:** None
-
-**Documentation:**
-- Location: No /docs directory
-- README: Brief explaining that LZA and ISB configs are in separate repos
-
-**Current Scope:**
-- S3 backend for Terraform state
-- Billing view configuration for specified users
-
-**Note:** This is a minimal "glue" repository for org-level config
+**Key Files**: `accounts-config.yaml`, `organization-config.yaml`, `security-config.yaml`, `global-config.yaml`, `iam-config.yaml`, `network-config.yaml`, `service-control-policies/`.
 
 ---
 
-## Cross-Repository Analysis
+### 12. ndx-try-aws-scp
 
-### IaC Technology Distribution
+| Property | Value |
+|---|---|
+| **SHA** | `912db2e` |
+| **Description** | 5-layer cost defence system for Innovation Sandbox |
+| **Language** | Terraform + Python (Lambda) |
+| **IaC** | Terraform |
+| **Workflows** | `terraform.yaml` |
 
-| Technology | Count | Repos |
-|---|---|---|
-| TypeScript/Node.js CDK | 5 | innovation-sandbox-on-aws-approver, -billing-seperator, -costs, -deployer, ndx |
-| CloudFormation Templates | 2 | innovation-sandbox-on-aws, ndx_try_aws_scenarios |
-| Terraform | 2 | ndx-try-aws-scp, ndx-try-aws-terraform |
-| AWS LZA (YAML) | 1 | ndx-try-aws-lza |
-| Python Scripts | 1 | innovation-sandbox-on-aws-utils |
-| Static Site (Eleventy) | 2 | ndx, ndx_try_aws_scenarios |
+**Purpose**: Implements defence-in-depth cost protection: SCPs (service/compute restrictions), AWS Budgets (per-account daily/monthly limits), DynamoDB billing mode enforcement (auto-delete On-Demand tables). Three Terraform modules: `scp-manager`, `budgets-manager`, `dynamodb-billing-enforcer`.
 
-### Architecture Component Roles
+**Key Files**: `environments/ndx-production/main.tf`, `modules/scp-manager/`, `modules/budgets-manager/`, `modules/dynamodb-billing-enforcer/`.
+
+---
+
+### 13. ndx-try-aws-terraform
+
+| Property | Value |
+|---|---|
+| **SHA** | `3a1ed1b` |
+| **Description** | General Terraform configuration for org-level resources |
+| **Language** | Terraform |
+| **IaC** | Terraform |
+| **Workflows** | CI workflow |
+
+**Purpose**: Minimal glue repository for org-level Terraform state management (S3 backend) and billing view configuration. Contains `main.tf`, `terraform.tf`.
+
+---
+
+---
+
+## Repository Relationship Diagram
 
 ```mermaid
 flowchart TB
-    subgraph "Core Platform"
-        ISB[innovation-sandbox-on-aws]
-        LZA[ndx-try-aws-lza]
-        TF[ndx-try-aws-terraform]
+    subgraph core["Core Platform"]
+        ISB["innovation-sandbox-on-aws<br/><i>Fork of aws-solutions</i><br/>SHA: cf75b87"]
+        LZA["ndx-try-aws-lza<br/><i>LZA v1.1.0 Config</i><br/>SHA: 6d70ae3"]
+        TF["ndx-try-aws-terraform<br/><i>Org-level TF</i><br/>SHA: 3a1ed1b"]
     end
 
-    subgraph "ISB Satellites"
-        APPROVER[innovation-sandbox-on-aws-approver]
-        BILLING[innovation-sandbox-on-aws-billing-seperator]
-        COSTS[innovation-sandbox-on-aws-costs]
-        DEPLOYER[innovation-sandbox-on-aws-deployer]
-        UTILS[innovation-sandbox-on-aws-utils]
+    subgraph satellites["ISB Satellite Services"]
+        CLIENT["innovation-sandbox-on-aws-client<br/><i>API Client Library</i><br/>SHA: 7250ce7"]
+        APPROVER["innovation-sandbox-on-aws-approver<br/><i>Lease Approval</i><br/>SHA: be062e7"]
+        BILLING["innovation-sandbox-on-aws-billing-seperator<br/><i>72h Cooldown</i><br/>SHA: f8f1bdc"]
+        COSTS["innovation-sandbox-on-aws-costs<br/><i>Cost Collection</i><br/>SHA: cf659bb"]
+        DEPLOYER["innovation-sandbox-on-aws-deployer<br/><i>ARCHIVED</i><br/>SHA: c2a85a0"]
+        UTILS["innovation-sandbox-on-aws-utils<br/><i>Python Scripts</i><br/>SHA: aa7e781"]
     end
 
-    subgraph "Content Platforms"
-        NDX[ndx]
-        SCENARIOS[ndx_try_aws_scenarios]
+    subgraph content["Content Platforms"]
+        NDX["ndx<br/><i>NDX Website</i><br/>SHA: a5bf368"]
+        SCENARIOS["ndx_try_aws_scenarios<br/><i>7 AWS Scenarios</i><br/>SHA: fcb5c08"]
     end
 
-    subgraph "Security & Cost"
-        SCP[ndx-try-aws-scp]
+    subgraph costdefence["Cost Defence"]
+        SCP["ndx-try-aws-scp<br/><i>SCPs + Budgets</i><br/>SHA: 912db2e"]
     end
 
-    ISB --> APPROVER
-    ISB --> BILLING
-    ISB --> COSTS
-    ISB --> DEPLOYER
-    SCENARIOS --> DEPLOYER
-    LZA --> SCP
+    subgraph legacy["Placeholder"]
+        ISB_PH["ndx-try-aws-isb<br/><i>Empty Placeholder</i>"]
+    end
+
+    ISB -->|EventBridge| APPROVER
+    ISB -->|EventBridge| COSTS
+    ISB -->|EventBridge| DEPLOYER
+    ISB -->|EventBridge| BILLING
+    CLIENT -.->|API calls| ISB
+    APPROVER -->|uses| CLIENT
+    COSTS -->|uses| CLIENT
+    SCENARIOS -->|CFN templates via| DEPLOYER
+    LZA -->|defines OUs for| ISB
+    LZA -->|manages SCPs alongside| SCP
+    SCP -->|Terraform SCPs on| ISB
+    NDX -.->|links to| SCENARIOS
+    UTILS -.->|manages pool accounts in| ISB
 ```
 
-### Workflow Automation Coverage
+---
 
-| Type | Count | Repos |
+## Technology Distribution
+
+| Technology | Count | Repositories |
 |---|---|---|
-| CI Pipelines | 4 | innovation-sandbox-on-aws-costs, -deployer, ndx, ndx_try_aws_scenarios |
-| Deployment Pipelines | 4 | innovation-sandbox-on-aws-approver, -billing-seperator, -costs, ndx_try_aws_scenarios |
-| Infrastructure | 2 | ndx, ndx-try-aws-scp |
-| Accessibility Testing | 1 | ndx |
-| Docker Builds | 1 | ndx_try_aws_scenarios |
-| **No Workflows** | 5 | innovation-sandbox-on-aws, innovation-sandbox-on-aws-utils, ndx-try-aws-isb, ndx-try-aws-lza, ndx-try-aws-terraform |
+| TypeScript CDK | 6 | ISB core, approver, billing-separator, costs, deployer, ndx |
+| CloudFormation | 2 | ISB core, ndx_try_aws_scenarios |
+| Terraform | 2 | ndx-try-aws-scp, ndx-try-aws-terraform |
+| AWS LZA (YAML) | 1 | ndx-try-aws-lza |
+| Python Scripts | 1 | innovation-sandbox-on-aws-utils |
+| Eleventy SSG | 2 | ndx, ndx_try_aws_scenarios |
 
-### Documentation Quality Summary
+## Workflow Coverage
 
-| Level | Count | Repositories |
-|---|---|---|
-| Comprehensive | 6 | innovation-sandbox-on-aws-approver, innovation-sandbox-on-aws-costs, innovation-sandbox-on-aws-deployer, ndx, ndx_try_aws_scenarios, ndx-try-aws-scp |
-| Adequate | 2 | innovation-sandbox-on-aws, innovation-sandbox-on-aws-utils |
-| Minimal/Missing | 4 | innovation-sandbox-on-aws-billing-seperator, ndx-try-aws-isb, ndx-try-aws-lza, ndx-try-aws-terraform |
-
----
-
-## Notable Findings & Observations
-
-### Architecture Patterns
-
-1. **Event-Driven Satellites**: ISB satellites use EventBridge for loose coupling with core platform
-2. **CDK as Standard**: Most TypeScript/Node.js projects use AWS CDK for infrastructure
-3. **CloudFormation Template Distribution**: ndx_try_aws_scenarios centralizes 275+ templates for 7 scenarios
-4. **Terraform for Cost Defense**: Specialized Terraform modules for granular cost control
-5. **LZA for Organization**: Central YAML-based organization structure management
-
-### Deprecated/Temporary Components
-
-- **innovation-sandbox-on-aws-billing-separator**: Explicitly marked for archival pending ISB issue #70 resolution
-- **ndx-try-aws-isb**: Empty placeholder repository
-
-### Strengths
-
-- Consistent use of TypeScript/Node.js for Lambda functions
-- Strong GitHub Actions automation for deployment-critical repos
-- Comprehensive READMEs in core components
-- Multi-layer security approach (SCPs, quotas, budgets, anomaly detection)
-- Accessibility-first design (GOV.UK Frontend, WCAG 2.2 AA)
-
-### Areas for Improvement
-
-1. **Documentation Standardization**: Inconsistent levels of detail across repos
-2. **Workflow Coverage**: Several core infrastructure repos lack CI/CD automation
-3. **Architecture Documentation**: Missing detailed diagrams in configuration-heavy repos
+| Category | Repos |
+|---|---|
+| **CI/CD Pipelines** | approver, billing-separator, costs, deployer, ndx, ndx_try_aws_scenarios, ndx-try-aws-scp, ndx-try-aws-terraform, innovation-sandbox-on-aws-utils |
+| **No Workflows** | innovation-sandbox-on-aws, innovation-sandbox-on-aws-client, ndx-try-aws-isb, ndx-try-aws-lza |
 
 ---
 
-## Quick Reference: File Locations
+## Key Observations
 
-### CDK Projects
-- `innovation-sandbox-on-aws-approver/cdk/`
-- `innovation-sandbox-on-aws-billing-seperator/lib/` and `bin/`
-- `innovation-sandbox-on-aws-costs/infra/`
-- `innovation-sandbox-on-aws-deployer/infrastructure/`
-- `ndx/infra/`
+1. **Extension Architecture**: CDDO extends ISB through external satellite Lambda services rather than modifying the upstream fork, preserving upgrade compatibility.
 
-### CloudFormation Templates
-- `innovation-sandbox-on-aws/source/infrastructure/`
-- `ndx_try_aws_scenarios/cloudformation/scenarios/` (7 scenarios, 275+ files)
+2. **Event-Driven Integration**: Satellites communicate with the core ISB via Amazon EventBridge events (`LeaseRequested`, `LeaseApproved`, `LeaseTerminated`).
 
-### Terraform Configurations
-- `ndx-try-aws-scp/environments/ndx-production/` (primary)
-- `ndx-try-aws-scp/modules/` (5 reusable modules)
-- `ndx-try-aws-terraform/` (minimal org-level config)
+3. **Shared Client Library**: The `@co-cddo/isb-client` package provides a typed API client used by multiple satellite services.
 
-### LZA Configuration
-- `ndx-try-aws-lza/` (7 YAML config files, 7+ policy directories)
+4. **Dual SCP Management**: SCPs are managed by both LZA (YAML) and Terraform (`ndx-try-aws-scp`), requiring careful coordination to avoid drift.
 
-### Documentation Hubs
-- `ndx/docs/` (most comprehensive - 12+ files)
-- `ndx-try-aws-scp/docs/` (cost defense specifics)
-- `innovation-sandbox-on-aws-deployer/docs/` (architecture and PRDs)
-- `ndx_try_aws_scenarios/docs/` (scenario deployment)
+5. **Archived Repository**: `innovation-sandbox-on-aws-deployer` is archived (superseded by ISB blueprint pattern).
+
+6. **Scale**: 110 pool accounts (pool-001 to pool-121, with gaps) across 117 total AWS accounts.
 
 ---
 
-## Summary Statistics
-
-**Total IaC Artifacts:**
-- 275+ CloudFormation templates
-- 12+ CDK stack definitions
-- 10+ Terraform modules
-- 7+ LZA YAML configurations
-- 1 Python automation script
-
-**Key Statistics:**
-- 12 repositories surveyed
-- 10 with some form of documentation
-- 7 with GitHub Actions workflows
-- 7 unique AWS scenarios
-- 5 ISB satellite components
-
----
-
-**Related Documents:**
-- [01-upstream-analysis.md](./01-upstream-analysis.md) - Innovation Sandbox upstream fork analysis
+*Generated from source analysis on 2026-03-02. See [01-upstream-analysis.md](./01-upstream-analysis.md) for fork divergence details.*

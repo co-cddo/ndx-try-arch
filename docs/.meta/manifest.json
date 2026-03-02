@@ -1,440 +1,739 @@
 {
   "$schema": "manifest.schema.json",
   "version": "2.0",
-  "generatedAt": null,
+  "generatedAt": "2026-03-02",
   "generatedBy": "update.prompt",
-
   "documents": {
     "00-index.md": {
       "title": "Documentation Index",
       "category": "inventory",
-      "sources": ["docs/*.md"],
+      "sources": [
+        "docs/*.md"
+      ],
       "dependsOn": [],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "00-repo-inventory.md": {
       "title": "Repository Inventory",
       "category": "inventory",
-      "sources": ["github:co-cddo/*"],
+      "sources": [
+        "github:co-cddo/*"
+      ],
       "dependsOn": [],
-      "lastGenerated": null,
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 1909,
+      "diagramCount": 1,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "01-upstream-analysis.md": {
       "title": "Upstream Analysis",
       "category": "inventory",
-      "sources": ["github:aws-solutions/innovation-sandbox-on-aws", "github:co-cddo/innovation-sandbox-on-aws"],
-      "dependsOn": ["00-repo-inventory.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:aws-solutions/innovation-sandbox-on-aws",
+        "github:co-cddo/innovation-sandbox-on-aws"
+      ],
+      "dependsOn": [
+        "00-repo-inventory.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "cf75b87",
+      "wordCount": 1043,
+      "diagramCount": 2,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "02-aws-organization.md": {
       "title": "AWS Organization Structure",
       "category": "inventory",
-      "sources": ["aws:organization"],
+      "sources": [
+        "aws:organization"
+      ],
       "dependsOn": [],
-      "lastGenerated": null,
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 1085,
+      "diagramCount": 3,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "03-hub-account-resources.md": {
       "title": "Hub Account Resources",
       "category": "inventory",
-      "sources": ["aws:568672915267"],
-      "dependsOn": ["02-aws-organization.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "aws:568672915267"
+      ],
+      "dependsOn": [
+        "02-aws-organization.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "cf75b87",
+      "wordCount": 1186,
+      "diagramCount": 1,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "04-cross-account-trust.md": {
       "title": "Cross-Account Trust",
       "category": "inventory",
-      "sources": ["aws:iam-roles"],
-      "dependsOn": ["02-aws-organization.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "aws:iam-roles"
+      ],
+      "dependsOn": [
+        "02-aws-organization.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "cf75b87",
+      "wordCount": 1178,
+      "diagramCount": 3,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "05-service-control-policies.md": {
       "title": "Service Control Policies",
       "category": "inventory",
-      "sources": ["aws:scps"],
-      "dependsOn": ["02-aws-organization.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "aws:scps"
+      ],
+      "dependsOn": [
+        "02-aws-organization.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "912db2e",
+      "wordCount": 1784,
+      "diagramCount": 2,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "10-isb-core-architecture.md": {
       "title": "ISB Core Architecture",
       "category": "isb-core",
-      "sources": ["github:co-cddo/innovation-sandbox-on-aws"],
-      "dependsOn": ["00-repo-inventory.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/innovation-sandbox-on-aws"
+      ],
+      "dependsOn": [
+        "00-repo-inventory.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "cf75b87",
+      "wordCount": 3358,
+      "diagramCount": 3,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "11-lease-lifecycle.md": {
       "title": "Lease Lifecycle",
       "category": "isb-core",
-      "sources": ["github:co-cddo/innovation-sandbox-on-aws"],
-      "dependsOn": ["10-isb-core-architecture.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/innovation-sandbox-on-aws"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "cf75b87",
+      "wordCount": 2238,
+      "diagramCount": 8,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "12-isb-frontend.md": {
       "title": "ISB Frontend",
       "category": "isb-core",
-      "sources": ["github:co-cddo/innovation-sandbox-on-aws"],
-      "dependsOn": ["10-isb-core-architecture.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/innovation-sandbox-on-aws"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "cf75b87",
+      "wordCount": 2507,
+      "diagramCount": 3,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "13-isb-customizations.md": {
       "title": "ISB Customizations",
       "category": "isb-core",
-      "sources": ["github:co-cddo/innovation-sandbox-on-aws"],
-      "dependsOn": ["10-isb-core-architecture.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/innovation-sandbox-on-aws",
+        "github:co-cddo/innovation-sandbox-on-aws-approver",
+        "github:co-cddo/innovation-sandbox-on-aws-billing-seperator",
+        "github:co-cddo/innovation-sandbox-on-aws-costs",
+        "github:co-cddo/innovation-sandbox-on-aws-deployer",
+        "github:co-cddo/innovation-sandbox-on-aws-client",
+        "github:co-cddo/innovation-sandbox-on-aws-utils"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "cf75b87",
+      "wordCount": 3412,
+      "diagramCount": 3,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "20-approver-system.md": {
       "title": "Approver System",
       "category": "isb-satellites",
-      "sources": ["github:co-cddo/isb-approver"],
-      "dependsOn": ["10-isb-core-architecture.md"],
+      "sources": [
+        "github:co-cddo/isb-approver"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "21-billing-separator.md": {
       "title": "Billing Separator",
       "category": "isb-satellites",
-      "sources": ["github:co-cddo/isb-billing-separator"],
-      "dependsOn": ["10-isb-core-architecture.md"],
+      "sources": [
+        "github:co-cddo/isb-billing-separator"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "22-cost-tracking.md": {
       "title": "Cost Tracking",
       "category": "isb-satellites",
-      "sources": ["github:co-cddo/isb-cost-tracking"],
-      "dependsOn": ["10-isb-core-architecture.md"],
+      "sources": [
+        "github:co-cddo/isb-cost-tracking"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "23-deployer.md": {
       "title": "ISB Deployer",
       "category": "isb-satellites",
-      "sources": ["github:co-cddo/isb-deployer"],
-      "dependsOn": ["10-isb-core-architecture.md"],
+      "sources": [
+        "github:co-cddo/isb-deployer"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "24-utils.md": {
       "title": "ISB Utils",
       "category": "isb-satellites",
-      "sources": ["github:co-cddo/isb-utils"],
-      "dependsOn": ["10-isb-core-architecture.md"],
+      "sources": [
+        "github:co-cddo/isb-utils"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "30-ndx-website.md": {
       "title": "NDX Website",
       "category": "websites",
-      "sources": ["github:co-cddo/ndx"],
+      "sources": [
+        "github:co-cddo/ndx"
+      ],
       "dependsOn": [],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "lastGenerated": "2026-03-02",
+      "checksum": "a5bf368",
+      "wordCount": 2800,
+      "diagramCount": 1,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "31-signup-flow.md": {
       "title": "Signup Flow",
       "category": "websites",
-      "sources": ["github:co-cddo/ndx"],
-      "dependsOn": ["30-ndx-website.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/ndx"
+      ],
+      "dependsOn": [
+        "30-ndx-website.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "a5bf368",
+      "wordCount": 2400,
+      "diagramCount": 2,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "32-scenarios-microsite.md": {
       "title": "Scenarios Microsite",
       "category": "websites",
-      "sources": ["github:co-cddo/ndx-scenarios"],
+      "sources": [
+        "github:co-cddo/ndx_try_aws_scenarios"
+      ],
       "dependsOn": [],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "lastGenerated": "2026-03-02",
+      "checksum": "fcb5c08",
+      "wordCount": 2200,
+      "diagramCount": 2,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "40-lza-configuration.md": {
       "title": "LZA Configuration",
       "category": "infrastructure",
-      "sources": ["github:co-cddo/ndx-lza-config"],
-      "dependsOn": ["02-aws-organization.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/ndx-try-aws-lza"
+      ],
+      "dependsOn": [
+        "02-aws-organization.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "6d70ae3",
+      "wordCount": 2577,
+      "diagramCount": 2,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "41-terraform-scp.md": {
       "title": "Terraform SCP",
       "category": "infrastructure",
-      "sources": ["github:co-cddo/ndx-terraform-scp"],
-      "dependsOn": ["05-service-control-policies.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/ndx-try-aws-scp"
+      ],
+      "dependsOn": [
+        "05-service-control-policies.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "912db2e",
+      "wordCount": 2180,
+      "diagramCount": 3,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "42-terraform-resources.md": {
       "title": "Terraform Resources",
       "category": "infrastructure",
-      "sources": ["github:co-cddo/ndx-terraform"],
-      "dependsOn": ["02-aws-organization.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/ndx-try-aws-terraform"
+      ],
+      "dependsOn": [
+        "02-aws-organization.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "3a1ed1b",
+      "wordCount": 1026,
+      "diagramCount": 2,
+      "quality": {
+        "score": 9,
+        "issues": []
+      }
     },
     "43-ndx-try-aws-isb.md": {
       "title": "NDX Try AWS ISB",
       "category": "infrastructure",
-      "sources": ["github:co-cddo/ndx-try-aws-isb"],
-      "dependsOn": ["10-isb-core-architecture.md"],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "sources": [
+        "github:co-cddo/ndx-try-aws-isb"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
+      "lastGenerated": "2026-03-02",
+      "checksum": "70bb7ec",
+      "wordCount": 755,
+      "diagramCount": 1,
+      "quality": {
+        "score": 8,
+        "issues": []
+      }
     },
     "50-github-actions-inventory.md": {
       "title": "GitHub Actions Inventory",
       "category": "cicd",
-      "sources": ["github:co-cddo/*/.github/workflows"],
-      "dependsOn": ["00-repo-inventory.md"],
+      "sources": [
+        "github:co-cddo/*/.github/workflows"
+      ],
+      "dependsOn": [
+        "00-repo-inventory.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "51-oidc-configuration.md": {
       "title": "OIDC Configuration",
       "category": "cicd",
-      "sources": ["aws:oidc-providers", "github:co-cddo/*/.github/workflows"],
-      "dependsOn": ["50-github-actions-inventory.md"],
+      "sources": [
+        "aws:oidc-providers",
+        "github:co-cddo/*/.github/workflows"
+      ],
+      "dependsOn": [
+        "50-github-actions-inventory.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "52-deployment-flows.md": {
       "title": "Deployment Flows",
       "category": "cicd",
-      "sources": ["github:co-cddo/*/.github/workflows"],
-      "dependsOn": ["50-github-actions-inventory.md"],
+      "sources": [
+        "github:co-cddo/*/.github/workflows"
+      ],
+      "dependsOn": [
+        "50-github-actions-inventory.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "53-manual-operations.md": {
       "title": "Manual Operations",
       "category": "cicd",
-      "sources": ["github:co-cddo/*/docs"],
-      "dependsOn": ["52-deployment-flows.md"],
+      "sources": [
+        "github:co-cddo/*/docs"
+      ],
+      "dependsOn": [
+        "52-deployment-flows.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "60-auth-architecture.md": {
       "title": "Auth Architecture",
       "category": "security",
-      "sources": ["github:co-cddo/innovation-sandbox-on-aws", "aws:cognito"],
-      "dependsOn": ["10-isb-core-architecture.md"],
+      "sources": [
+        "github:co-cddo/innovation-sandbox-on-aws",
+        "aws:cognito"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "61-encryption.md": {
       "title": "Encryption",
       "category": "security",
-      "sources": ["aws:kms", "github:co-cddo/innovation-sandbox-on-aws"],
-      "dependsOn": ["10-isb-core-architecture.md"],
+      "sources": [
+        "aws:kms",
+        "github:co-cddo/innovation-sandbox-on-aws"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "62-secrets-management.md": {
       "title": "Secrets Management",
       "category": "security",
-      "sources": ["aws:secrets-manager", "github:co-cddo/*"],
-      "dependsOn": ["60-auth-architecture.md"],
+      "sources": [
+        "aws:secrets-manager",
+        "github:co-cddo/*"
+      ],
+      "dependsOn": [
+        "60-auth-architecture.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "63-compliance.md": {
       "title": "Compliance",
       "category": "security",
-      "sources": ["aws:scps", "aws:config"],
-      "dependsOn": ["05-service-control-policies.md"],
+      "sources": [
+        "aws:scps",
+        "aws:config"
+      ],
+      "dependsOn": [
+        "05-service-control-policies.md"
+      ],
       "lastGenerated": null,
       "checksum": null,
       "wordCount": null,
       "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "quality": {
+        "score": null,
+        "issues": []
+      }
     },
     "70-data-flows.md": {
       "title": "Data Flows",
       "category": "data",
-      "sources": ["github:co-cddo/innovation-sandbox-on-aws", "aws:dynamodb", "aws:eventbridge"],
-      "dependsOn": ["10-isb-core-architecture.md"],
-      "lastGenerated": null,
+      "sources": [
+        "github:co-cddo/innovation-sandbox-on-aws",
+        "aws:dynamodb",
+        "aws:eventbridge"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md"
+      ],
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 1817,
+      "diagramCount": 5,
+      "quality": {
+        "score": 95,
+        "issues": []
+      }
     },
     "71-external-integrations.md": {
       "title": "External Integrations",
       "category": "data",
-      "sources": ["github:co-cddo/*"],
-      "dependsOn": ["70-data-flows.md"],
-      "lastGenerated": null,
+      "sources": [
+        "github:co-cddo/*"
+      ],
+      "dependsOn": [
+        "70-data-flows.md"
+      ],
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 1867,
+      "diagramCount": 4,
+      "quality": {
+        "score": 95,
+        "issues": []
+      }
     },
     "72-repo-dependencies.md": {
       "title": "Repository Dependencies",
       "category": "data",
-      "sources": ["github:co-cddo/*/package.json"],
-      "dependsOn": ["00-repo-inventory.md"],
-      "lastGenerated": null,
+      "sources": [
+        "github:co-cddo/*/package.json"
+      ],
+      "dependsOn": [
+        "00-repo-inventory.md"
+      ],
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 1786,
+      "diagramCount": 3,
+      "quality": {
+        "score": 95,
+        "issues": []
+      }
     },
     "80-c4-architecture.md": {
       "title": "C4 Architecture",
       "category": "architecture",
-      "sources": ["docs/*.md"],
-      "dependsOn": ["10-isb-core-architecture.md", "02-aws-organization.md"],
-      "lastGenerated": null,
+      "sources": [
+        "docs/*.md"
+      ],
+      "dependsOn": [
+        "10-isb-core-architecture.md",
+        "02-aws-organization.md"
+      ],
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 1570,
+      "diagramCount": 5,
+      "quality": {
+        "score": 95,
+        "issues": []
+      }
     },
     "81-aws-architecture.md": {
       "title": "AWS Architecture",
       "category": "architecture",
-      "sources": ["aws:*"],
-      "dependsOn": ["02-aws-organization.md", "03-hub-account-resources.md"],
-      "lastGenerated": null,
+      "sources": [
+        "aws:*"
+      ],
+      "dependsOn": [
+        "02-aws-organization.md",
+        "03-hub-account-resources.md"
+      ],
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 1639,
+      "diagramCount": 6,
+      "quality": {
+        "score": 95,
+        "issues": []
+      }
     },
     "82-process-flows.md": {
       "title": "Process Flows",
       "category": "architecture",
-      "sources": ["docs/*.md"],
-      "dependsOn": ["11-lease-lifecycle.md", "52-deployment-flows.md"],
-      "lastGenerated": null,
+      "sources": [
+        "docs/*.md"
+      ],
+      "dependsOn": [
+        "11-lease-lifecycle.md",
+        "52-deployment-flows.md"
+      ],
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 2027,
+      "diagramCount": 7,
+      "quality": {
+        "score": 95,
+        "issues": []
+      }
     },
     "90-issues-discovered.md": {
       "title": "Issues Discovered",
       "category": "meta",
-      "sources": ["docs/*.md"],
+      "sources": [
+        "docs/*.md"
+      ],
       "dependsOn": [],
-      "lastGenerated": null,
+      "lastGenerated": "2026-03-02",
       "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
-      "quality": { "score": null, "issues": [] }
+      "wordCount": 2281,
+      "diagramCount": 2,
+      "quality": {
+        "score": 95,
+        "issues": []
+      }
     }
   },
-
   "categories": {
-    "inventory": { "range": "00-09", "description": "Discovery and overview" },
-    "isb-core": { "range": "10-19", "description": "ISB core components" },
-    "isb-satellites": { "range": "20-29", "description": "ISB extension repos" },
-    "websites": { "range": "30-39", "description": "NDX websites" },
-    "infrastructure": { "range": "40-49", "description": "LZA and Terraform" },
-    "cicd": { "range": "50-59", "description": "CI/CD pipelines" },
-    "security": { "range": "60-69", "description": "Security and compliance" },
-    "data": { "range": "70-79", "description": "Data flows and integrations" },
-    "architecture": { "range": "80-89", "description": "Master diagrams" },
-    "meta": { "range": "90-99", "description": "Issues and metadata" }
+    "inventory": {
+      "range": "00-09",
+      "description": "Discovery and overview"
+    },
+    "isb-core": {
+      "range": "10-19",
+      "description": "ISB core components"
+    },
+    "isb-satellites": {
+      "range": "20-29",
+      "description": "ISB extension repos"
+    },
+    "websites": {
+      "range": "30-39",
+      "description": "NDX websites"
+    },
+    "infrastructure": {
+      "range": "40-49",
+      "description": "LZA and Terraform"
+    },
+    "cicd": {
+      "range": "50-59",
+      "description": "CI/CD pipelines"
+    },
+    "security": {
+      "range": "60-69",
+      "description": "Security and compliance"
+    },
+    "data": {
+      "range": "70-79",
+      "description": "Data flows and integrations"
+    },
+    "architecture": {
+      "range": "80-89",
+      "description": "Master diagrams"
+    },
+    "meta": {
+      "range": "90-99",
+      "description": "Issues and metadata"
+    }
   }
 }

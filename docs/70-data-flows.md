@@ -1,20 +1,11 @@
-# Data Flows & Integration
+# Data Flows
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Scope:** Comprehensive data flow documentation for NDX:Try AWS architecture
-
----
+> **Last Updated**: 2026-03-02
+> **Sources**: repos/innovation-sandbox-on-aws, repos/innovation-sandbox-on-aws-costs, repos/innovation-sandbox-on-aws-approver, repos/innovation-sandbox-on-aws-billing-seperator, repos/innovation-sandbox-on-aws-deployer, .state/discovered-accounts.json
 
 ## Executive Summary
 
-This document maps the critical data flows through the NDX:Try AWS ecosystem, from user signup to cost reporting. It synthesizes information from all architectural components to provide end-to-end visibility of how data moves through the system.
-
-**Key Data Flows:**
-1. User signup → ISB lease request
-2. Lease approval → account deployment
-3. Cost data collection → billing
-4. Event-driven orchestration across satellites
+The NDX:Try AWS ecosystem relies on an event-driven data architecture where DynamoDB tables serve as the primary data stores, EventBridge acts as the central nervous system for cross-component communication, and Step Functions orchestrate multi-step workflows. Data flows span the Hub account (568672915267), the Organization Management account (955063685555), and up to 110 pool accounts within the ndx_InnovationSandboxAccountPool OU.
 
 ---
 
@@ -226,7 +217,7 @@ sequenceDiagram
     end
 
     EventBridge->>Lifecycle Mgr: LeaseApproved event
-    Lifecycle Mgr->>Lifecycle Mgr: Move account OU<br/>(Available → Active)
+    Lifecycle Mgr->>Lifecycle Mgr: Move account OU<br/>(Available to Active)
     Lifecycle Mgr->>DynamoDB: Update account status
 
     EventBridge->>Deployer: LeaseApproved event
@@ -260,14 +251,13 @@ Input: Raw lease request
 }
 ```
 
-Intermediate: Rule scores
+Intermediate: Rule scores (weighted across 5 categories, 19 rules total)
 ```json
 {
   "R01_PreviousLeaseCompliance": {"score": 92, "weight": 10, "passed": true},
   "R02_CostOverrunHistory": {"score": 100, "weight": 8, "passed": true},
   "R09_JustificationQuality": {"score": 78, "weight": 8, "passed": true},
-  "R13_CurrentSpendVsQuota": {"score": 100, "weight": 6, "passed": true},
-  // ... R19
+  "R13_CurrentSpendVsQuota": {"score": 100, "weight": 6, "passed": true}
 }
 ```
 
@@ -277,38 +267,14 @@ Output: Approval decision
   "compositeScore": 87,
   "decision": "APPROVED",
   "decisionBy": "AUTO",
-  "ruleBreakdown": {...}
+  "ruleBreakdown": {}
 }
 ```
 
 **2. Deployer Parameter Enrichment**
 
-Input: LeaseApproved event
-```json
-{
-  "leaseId": {"userEmail": "...", "uuid": "..."},
-  "awsAccountId": "340601547583"
-}
-```
+The deployer uses the `@co-cddo/isb-client` library to fetch lease details from the ISB API, then enriches CloudFormation parameters:
 
-Enrichment: Fetch from DynamoDB
-```json
-{
-  "LeaseParams": {
-    "AccountId": "340601547583",
-    "UserEmail": "user@example.gov.uk",
-    "Budget": 1000,
-    "Duration": 48
-  },
-  "TemplateParams": {
-    "TemplateUrl": "https://github.com/co-cddo/ndx_try_aws_scenarios",
-    "TemplatePath": "cloudformation/scenarios/council-chatbot/",
-    "StackName": "NDXTry-CouncilChatbot"
-  }
-}
-```
-
-Output: CloudFormation parameters
 ```json
 {
   "StackName": "NDXTry-CouncilChatbot",
@@ -329,7 +295,7 @@ Output: CloudFormation parameters
 **Deployer Assumes Role in Target Account**
 ```
 Source: Hub Account (568672915267)
-Target: Pool Account (340601547583)
+Target: Pool Account (e.g., pool-003 / 340601547583)
 Role: OrganizationAccountAccessRole
 Permissions:
   - cloudformation:CreateStack
@@ -381,19 +347,20 @@ sequenceDiagram
     Billing Sep->>DynamoDB: Check CostReports<br/>(data available?)
     DynamoDB-->>Billing Sep: Cost data found
 
-    Billing Sep->>DynamoDB: Update account status<br/>(Quarantine → Available)
+    Billing Sep->>DynamoDB: Update account status<br/>(Quarantine to Available)
 
     Cleanup->>Cleanup: Trigger account cleanup<br/>(AWS Nuke)
 ```
 
 ### Cost Data Structure
 
-**Cost Explorer Query**
+**Cost Explorer Query (from Hub to Org Management Account)**
 ```python
+# Cost collector assumes CostExplorerReadRole in 955063685555
 ce.get_cost_and_usage(
     TimePeriod={
-        'Start': '2024-01-01',
-        'End': '2024-01-31'
+        'Start': start_date,
+        'End': end_date
     },
     Granularity='DAILY',
     Metrics=['UnblendedCost', 'UsageQuantity'],
@@ -404,35 +371,10 @@ ce.get_cost_and_usage(
     Filter={
         'Dimensions': {
             'Key': 'LINKED_ACCOUNT',
-            'Values': ['340601547583']
+            'Values': [account_id]
         }
     }
 )
-```
-
-**Response Structure**
-```json
-{
-  "ResultsByTime": [
-    {
-      "TimePeriod": {"Start": "2024-01-01", "End": "2024-01-02"},
-      "Groups": [
-        {
-          "Keys": ["Amazon Elastic Compute Cloud - Compute", "eu-west-2"],
-          "Metrics": {
-            "UnblendedCost": {"Amount": "45.67", "Unit": "USD"}
-          }
-        },
-        {
-          "Keys": ["Amazon Simple Storage Service", "eu-west-2"],
-          "Metrics": {
-            "UnblendedCost": {"Amount": "12.34", "Unit": "USD"}
-          }
-        }
-      ]
-    }
-  ]
-}
 ```
 
 **DynamoDB CostReports Record**
@@ -441,20 +383,16 @@ ce.get_cost_and_usage(
   "leaseId": "lease-abc-123",
   "accountId": "340601547583",
   "collectedAt": 1704067200,
-
   "totalCost": 856.34,
   "budget": 1000,
   "overBudget": false,
   "variance": -143.66,
   "variancePercent": -14.4,
-
   "duration": 30,
   "costPerDay": 28.54,
-
-  "dailyCosts": "[{\"date\":\"2024-01-01\",\"cost\":25.67},...}]",
-  "topServices": "[{\"service\":\"EC2\",\"cost\":456.78},...}]",
-  "topRegions": "[{\"region\":\"eu-west-2\",\"cost\":850.00},...}]",
-
+  "dailyCosts": "[{\"date\":\"2024-01-01\",\"cost\":25.67}]",
+  "topServices": "[{\"service\":\"EC2\",\"cost\":456.78}]",
+  "topRegions": "[{\"region\":\"us-east-1\",\"cost\":850.00}]",
   "dataSource": "AWS_COST_EXPLORER",
   "ownerId": "user@example.gov.uk",
   "orgUnit": "Innovation"
@@ -519,32 +457,8 @@ stateDiagram-v2
 }
 ```
 
-**SQS Attributes**
-```
-VisibilityTimeout: 259200 (72 hours)
-MessageRetentionPeriod: 345600 (96 hours)
-ReceiveCount: 0
-ApproximateFirstReceiveTimestamp: null (not yet visible)
-```
+### Decision Matrix
 
-### Cost Data Verification
-
-**Lambda Check Logic**
-```python
-def check_costs_available(account_id, lease_id):
-    response = dynamodb.get_item(
-        TableName='CostReports',
-        Key={'leaseId': {'S': lease_id}}
-    )
-
-    if 'Item' not in response:
-        return False
-
-    final_cost = response['Item'].get('finalCost', {}).get('N')
-    return final_cost is not None and float(final_cost) >= 0
-```
-
-**Decision Matrix**
 ```
 Hours Elapsed | Cost Data | Action
 --------------|-----------|------------------
@@ -582,6 +496,7 @@ graph TB
     subgraph "ISB Core"
         LeaseTable[(LeaseTable)]
         AccountTable[(SandboxAccountTable)]
+        TemplateTable[(LeaseTemplateTable)]
     end
 
     subgraph "Approver"
@@ -601,6 +516,7 @@ graph TB
     LeaseTable -->|Read| Billing Sep
 
     AccountTable -->|Read/Write| Billing Sep
+    TemplateTable -->|Read| Deployer
 
     CostReports -->|Read| Approver
     CostReports -->|Read| Billing Sep
@@ -611,44 +527,6 @@ graph TB
 ---
 
 ## Data Consistency & Error Handling
-
-### Idempotency
-
-**LeaseApproved Event Handler (Deployer)**
-```typescript
-// Idempotency key: eventId
-const deploymentId = `${leaseId}-${eventId}`
-
-// Check if already processed
-const existing = await ddb.getItem({
-  TableName: 'DeploymentHistory',
-  Key: {deploymentId}
-})
-
-if (existing.Item) {
-  console.log('Already processed, skipping')
-  return existing.Item.result
-}
-
-// Process deployment
-const result = await deployStack(...)
-
-// Record completion
-await ddb.putItem({
-  TableName: 'DeploymentHistory',
-  Item: {deploymentId, result, processedAt: Date.now()}
-})
-```
-
-### Eventual Consistency Handling
-
-**Scenario**: Cost data not immediately visible after collection
-
-**Mitigation**:
-1. 24-hour delay before first collection attempt
-2. 72-hour quarantine before cleanup
-3. Retry logic with exponential backoff
-4. DLQ for permanent failures
 
 ### Transaction Patterns
 
@@ -676,10 +554,18 @@ dynamodb.transact_write_items(
 )
 ```
 
-**Rollback on Failure**:
-- Transaction fails if account not available
-- No partial state (lease created but account not allocated)
-- Automatic retry via SQS
+**Rollback on Failure**: Transaction fails atomically if account is not available, preventing partial states.
+
+### Idempotency
+
+The Approver uses `@aws-lambda-powertools/idempotency` to ensure duplicate EventBridge deliveries do not result in duplicate processing. The deployer checks for existing CloudFormation stacks before creating new ones.
+
+### Eventual Consistency Handling
+
+1. 24-hour delay before first cost collection attempt (Cost Explorer data lag)
+2. 72-hour quarantine before cleanup (billing propagation)
+3. Retry logic with exponential backoff (via `exponential-backoff` library in billing separator)
+4. Dead Letter Queues for permanent failures
 
 ---
 
@@ -696,12 +582,12 @@ dynamodb.transact_write_items(
 
 ### Latency Targets
 
-| Flow | Target | Actual (P95) |
-|------|--------|--------------|
-| Lease creation | < 2s | 1.3s |
-| Approval scoring | < 10s | 8.7s (includes Bedrock) |
-| Deployment trigger | < 5s | 3.2s |
-| Cost collection | < 30s | 18.4s |
+| Flow | Target | Typical (P95) |
+|------|--------|---------------|
+| Lease creation | < 2s | ~1.3s |
+| Approval scoring | < 10s | ~8.7s (includes Bedrock) |
+| Deployment trigger | < 5s | ~3.2s |
+| Cost collection | < 30s | ~18.4s |
 
 ---
 
@@ -712,9 +598,7 @@ dynamodb.transact_write_items(
 - [22-cost-tracking.md](./22-cost-tracking.md) - Cost collection details
 - [21-billing-separator.md](./21-billing-separator.md) - Quarantine logic
 - [71-external-integrations.md](./71-external-integrations.md) - External API integrations
+- [10-isb-core-architecture.md](./10-isb-core-architecture.md) - ISB Core internals
 
 ---
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Complete - Synthesized from existing documentation
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

@@ -1,14 +1,11 @@
 # Repository Dependencies
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Total Repositories:** 12
-
----
+> **Last Updated**: 2026-03-02
+> **Sources**: All 12 repositories (package.json analysis), repos/innovation-sandbox-on-aws-client/package.json
 
 ## Executive Summary
 
-This document maps the dependency relationships between the 12 repositories in the NDX:Try AWS ecosystem. It identifies shared code, deployment order constraints, and integration points based on package.json analysis and architectural understanding.
+The NDX:Try AWS ecosystem comprises 12 repositories with complex inter-dependencies spanning EventBridge event contracts, shared DynamoDB tables, a common API client library (`@co-cddo/isb-client`), and overlapping AWS SDK versions. Dependency analysis reveals version fragmentation across CDK (v2.170.0 to v2.240.0), AWS SDK v3 (v3.654.0 to v3.1000.0), and validation libraries (zod v3.24.0 vs v4.3.6), creating compatibility risks that warrant standardisation.
 
 ---
 
@@ -17,30 +14,37 @@ This document maps the dependency relationships between the 12 repositories in t
 ```mermaid
 graph TB
     subgraph "Core Infrastructure"
-        LZA[ndx-try-aws-lza<br/>Landing Zone Config]
-        TF[ndx-try-aws-terraform<br/>Org Management]
-        SCP[ndx-try-aws-scp<br/>Cost Defense]
+        LZA[ndx-try-aws-lza<br/>Landing Zone Config<br/>YAML]
+        TF[ndx-try-aws-terraform<br/>Org Management<br/>Terraform]
+        SCP[ndx-try-aws-scp<br/>Cost Defense<br/>Terraform]
     end
 
     subgraph "ISB Core"
-        ISB[innovation-sandbox-on-aws<br/>Core Platform v1.1.4]
+        ISB[innovation-sandbox-on-aws<br/>v1.1.4 - CDK v2.170.0<br/>21 Lambda functions]
+    end
+
+    subgraph "Shared Client"
+        CLIENT[@co-cddo/isb-client<br/>v2.0.0 / v2.0.1<br/>ISB API wrapper]
     end
 
     subgraph "ISB Satellites"
-        APPROVER[innovation-sandbox-on-aws-approver<br/>Approval System]
-        BILLING[innovation-sandbox-on-aws-billing-seperator<br/>Billing Quarantine]
-        COSTS[innovation-sandbox-on-aws-costs<br/>Cost Tracking]
-        DEPLOYER[innovation-sandbox-on-aws-deployer<br/>Auto Deployment]
-        UTILS[innovation-sandbox-on-aws-utils<br/>Pool Management]
+        APPROVER[approver<br/>v0.1.0 - CDK v2.170.0]
+        BILLING[billing-seperator<br/>v1.0.0 - CDK v2.240.0]
+        COSTS[costs<br/>v1.0.0 - CDK v2.240.0]
+        DEPLOYER[deployer<br/>v1.0.0 - No CDK infra]
     end
 
     subgraph "Content Platforms"
-        NDX[ndx<br/>Website + Try Platform]
-        SCENARIOS[ndx_try_aws_scenarios<br/>CloudFormation Templates]
+        NDX[ndx website<br/>Eleventy v3.1.2<br/>Yarn 4.5.0]
+        SCENARIOS[ndx_try_aws_scenarios<br/>Eleventy v3.0.0<br/>275+ templates]
     end
 
-    LZA -->|Baseline Config| ISB
+    subgraph "Utilities"
+        UTILS[innovation-sandbox-on-aws-utils<br/>Python scripts]
+    end
+
     TF -->|Organization| LZA
+    LZA -->|Baseline Config| ISB
     SCP -->|Cost Controls| ISB
 
     ISB -->|EventBridge Events| APPROVER
@@ -48,15 +52,17 @@ graph TB
     ISB -->|EventBridge Events| COSTS
     ISB -->|EventBridge Events| DEPLOYER
 
+    CLIENT -->|API client v2.0.1| APPROVER
+    CLIENT -->|API client v2.0.0| COSTS
+    CLIENT -->|API client v2.0.0| DEPLOYER
+
     COSTS -->|Cost Data| BILLING
     COSTS -->|Cost History| APPROVER
-
-    DEPLOYER -->|Deploys| SCENARIOS
-
-    NDX -->|Links to| ISB
-    SCENARIOS -->|Templates for| DEPLOYER
+    DEPLOYER -->|Deploys templates| SCENARIOS
+    NDX -->|Links to ISB| ISB
 
     style ISB fill:#e1f5ff,stroke:#333,stroke-width:3px
+    style CLIENT fill:#ffe1e1,stroke:#333,stroke-width:2px
 ```
 
 ---
@@ -65,248 +71,163 @@ graph TB
 
 ### Phase 1: Foundation (AWS Organization)
 
-**Order:**
-1. `ndx-try-aws-terraform` (organization structure)
-2. `ndx-try-aws-lza` (Landing Zone Accelerator)
-3. `ndx-try-aws-scp` (Service Control Policies)
-
-**Rationale:**
-- Organization must exist before LZA can configure it
-- LZA establishes account structure and baselines
-- SCPs applied after accounts created
-
----
+| Order | Repository | IaC Tool | Purpose |
+|-------|-----------|----------|---------|
+| 1 | `ndx-try-aws-terraform` | Terraform | Organization structure, OUs |
+| 2 | `ndx-try-aws-lza` | Landing Zone Accelerator | Account baselines, security |
+| 3 | `ndx-try-aws-scp` | Terraform | Innovation Sandbox SCPs |
 
 ### Phase 2: ISB Core
 
-**Order:**
-4. `innovation-sandbox-on-aws` (all 4 stacks)
-   - AccountPool Stack
-   - IDC Stack
-   - Data Stack
-   - Compute Stack
+| Order | Repository | IaC Tool | Stacks |
+|-------|-----------|----------|--------|
+| 4 | `innovation-sandbox-on-aws` | CDK v2.170.0 | AccountPool, IDC, Data, Compute |
 
-**Prerequisites:**
-- LZA has created base OUs
-- Identity Center configured
-- Parent OU for sandbox accounts exists
+**Prerequisites**: LZA has created OUs, Identity Center configured, parent OU exists.
 
----
+### Phase 3: ISB Satellites (parallel after Phase 2)
 
-### Phase 3: ISB Satellites
+| Order | Repository | IaC Tool | Prerequisites |
+|-------|-----------|----------|---------------|
+| 5 | `innovation-sandbox-on-aws-approver` | CDK v2.170.0 | ISBEventBus, DynamoDB tables |
+| 6 | `innovation-sandbox-on-aws-costs` | CDK v2.240.0 | ISBEventBus, DynamoDB tables |
+| 7 | `innovation-sandbox-on-aws-billing-seperator` | CDK v2.240.0 | ISBEventBus, DynamoDB tables |
+| 8 | `innovation-sandbox-on-aws-deployer` | CDK (via CI) | ISBEventBus, Secrets Manager |
 
-**Order (parallel after ISB Core):**
-5. `innovation-sandbox-on-aws-approver`
-6. `innovation-sandbox-on-aws-costs`
-7. `innovation-sandbox-on-aws-billing-seperator`
-8. `innovation-sandbox-on-aws-deployer`
+### Phase 4: Content Platforms (independent)
 
-**Prerequisites:**
-- ISB Core EventBridge bus exists
-- ISB Core DynamoDB tables created
-- Identity Center integration complete
+| Order | Repository | IaC Tool |
+|-------|-----------|----------|
+| 9 | `ndx` | Eleventy + CDK (infra) |
+| 10 | `ndx_try_aws_scenarios` | Eleventy (static site) |
 
-**Cross-Satellite Dependencies:**
-- Costs → Billing Separator (cost data check)
-- Costs → Approver (historical spending)
+### Phase 5: Utilities (post-ISB)
 
----
-
-### Phase 4: Content Platforms
-
-**Order (can deploy in parallel):**
-9. `ndx` (website)
-10. `ndx_try_aws_scenarios` (templates)
-
-**Prerequisites:**
-- None (independent of ISB)
-- ISB URL for links from NDX website
-
----
-
-### Phase 5: Utilities
-
-**Order:**
-11. `innovation-sandbox-on-aws-utils` (scripts)
-
-**Prerequisites:**
-- ISB Core deployed (for pool account creation)
+| Order | Repository | Purpose |
+|-------|-----------|---------|
+| 11 | `innovation-sandbox-on-aws-utils` | Manual pool account management |
 
 ---
 
 ## NPM Package Dependencies
 
-### innovation-sandbox-on-aws (Core)
+### AWS SDK v3 Version Matrix
 
-**Key Dependencies:**
-```json
-{
-  "workspaces": [
-    "source/frontend",
-    "source/layers/*",
-    "source/lambdas/**",
-    "source/infrastructure",
-    "source/common"
-  ],
-  "version": "1.1.4"
-}
+```mermaid
+graph LR
+    subgraph "AWS SDK v3 Versions"
+        direction TB
+        V654["v3.654 - v3.758<br/>ISB Core"]
+        V987["v3.987<br/>Approver"]
+        V992["v3.992<br/>ISB Client"]
+        V993["v3.993<br/>Deployer"]
+        V995["v3.995<br/>Costs"]
+        V1000["v3.1000<br/>Billing Sep"]
+    end
+
+    V654 -.->|"346 minor versions behind"| V1000
+
+    style V654 fill:#f99,stroke:#333
+    style V1000 fill:#9f9,stroke:#333
 ```
 
-**AWS SDK Versions:**
-- @aws-sdk/* v3.654.0 - v3.758.0 (mixed)
-- aws-cdk v2.170.0 (devDependency)
+| Repository | @aws-sdk/* Range | Notes |
+|-----------|-----------------|-------|
+| innovation-sandbox-on-aws | v3.654.0 - v3.758.0 | Mixed across 21 workspaces |
+| @co-cddo/isb-client | v3.992.0 | Exact pin |
+| innovation-sandbox-on-aws-approver | v3.987.0 | Caret ranges (^3.987.0) |
+| innovation-sandbox-on-aws-deployer | v3.993.0 | Caret ranges (^3.993.0) |
+| innovation-sandbox-on-aws-costs | v3.995.0 | Caret ranges (^3.995.0) |
+| innovation-sandbox-on-aws-billing-seperator | v3.1000.0 | Caret ranges (^3.1000.0) |
 
-**Shared Internal Packages:**
-- `@amzn/innovation-sandbox-infrastructure` (CDK app)
-- `@amzn/innovation-sandbox-frontend` (React UI)
-- Common libraries in `source/common/`
+### CDK Version Matrix
 
----
+| Repository | aws-cdk-lib | aws-cdk (CLI) | Notes |
+|-----------|------------|---------------|-------|
+| innovation-sandbox-on-aws | v2.170.0 | (devDep) | Core platform |
+| innovation-sandbox-on-aws-approver | v2.170.0 | v2.170.0 | Aligned with core |
+| innovation-sandbox-on-aws-costs | v2.240.0 | N/A | 70 minor versions ahead |
+| innovation-sandbox-on-aws-billing-seperator | v2.240.0 | N/A | 70 minor versions ahead |
 
-### innovation-sandbox-on-aws-approver
+### Validation Library (zod) Versions
 
-**Key Dependencies:**
-```json
-{
-  "@aws-lambda-powertools/logger": "^2.12.0",
-  "@aws-sdk/client-bedrock-runtime": "^3.700.0",
-  "@aws-sdk/client-dynamodb": "^3.700.0",
-  "@aws-sdk/client-eventbridge": "^3.700.0",
-  "aws-cdk-lib": "^2.170.0",
-  "zod": "^3.24.0",
-  "engines": {"node": ">=20.0.0"}
-}
-```
+| Repository | zod Version | Major Version |
+|-----------|------------|---------------|
+| innovation-sandbox-on-aws-approver | ^3.24.0 | **v3** |
+| innovation-sandbox-on-aws-costs | ^4.3.6 | **v4** |
+| innovation-sandbox-on-aws-billing-seperator | ^4.3.6 | **v4** |
+| innovation-sandbox-on-aws (core) | N/A | Not used |
+| innovation-sandbox-on-aws-deployer | N/A | Not used |
 
-**External API Dependencies:**
-- Amazon Bedrock (us-east-1)
-- ukps-domains (GitHub, manual sync)
+**Note**: zod v3 to v4 is a major version bump with breaking API changes.
 
-**Shared with ISB Core:**
-- EventBridge event schemas
-- DynamoDB table structures (read-only)
+### Runtime Versions
 
----
-
-### innovation-sandbox-on-aws-costs
-
-**Key Dependencies:**
-```json
-{
-  "@aws-sdk/client-cost-explorer": "^3.980.0",
-  "@aws-sdk/client-scheduler": "^3.980.0",
-  "@aws-sdk/s3-request-presigner": "^3.980.0",
-  "aws-cdk-lib": "^2.237.1",
-  "zod": "^4.3.6"
-}
-```
-
-**External API Dependencies:**
-- AWS Cost Explorer (requires org management account role)
-
-**Consumed by:**
-- Billing Separator (reads CostReports table)
-- Approver (reads for scoring rules)
-
----
-
-### innovation-sandbox-on-aws-deployer
-
-**Key Dependencies:**
-```json
-{
-  "@aws-sdk/client-cloudformation": "^3.978.0",
-  "@aws-sdk/client-secrets-manager": "^3.978.0",
-  "@aws-sdk/client-sts": "^3.978.0",
-  "js-yaml": "^4.1.1",
-  "engines": {"node": ">=22.0.0"}
-}
-```
-
-**External API Dependencies:**
-- GitHub API (template fetching)
-
-**Consumes Templates From:**
-- ndx_try_aws_scenarios repository
-
----
-
-### ndx (Website)
-
-**Key Dependencies:**
-```json
-{
-  "@11ty/eleventy": "^3.1.2",
-  "@x-govuk/govuk-eleventy-plugin": "^8.3.0",
-  "@playwright/test": "^1.58.1",
-  "packageManager": "yarn@4.5.0"
-}
-```
-
-**No direct integration with ISB** (links only)
-
----
-
-### ndx_try_aws_scenarios
-
-**275+ CloudFormation templates**
-
-**Dependencies:**
-- None (pure CloudFormation YAML/JSON)
-- Consumed by Deployer Lambda
+| Repository | Node.js | Package Manager | Test Framework |
+|-----------|---------|----------------|----------------|
+| innovation-sandbox-on-aws | Node 20 | npm (workspaces) | vitest v4.0.10 |
+| innovation-sandbox-on-aws-approver | >= 20.0.0 | npm | vitest v4.0.16 |
+| innovation-sandbox-on-aws-costs | (not specified) | npm | vitest v4.0.18 |
+| innovation-sandbox-on-aws-deployer | >= 22.0.0 | npm | vitest v4.0.17 |
+| innovation-sandbox-on-aws-billing-seperator | (not specified) | npm | jest v30.2.0 |
+| @co-cddo/isb-client | >= 20 | yarn v4.6.0 | jest v30.2.0 |
+| ndx | (not specified) | yarn v4.5.0 | jest (+ Playwright) |
+| ndx_try_aws_scenarios | >= 22.0.0 | npm | vitest v4.0.18 |
 
 ---
 
 ## Shared Code & Libraries
 
-### Internal Shared Packages
+### @co-cddo/isb-client (Central API Client)
 
-**ISB Core** (`innovation-sandbox-on-aws`)
-```
-source/common/
-  ├── src/
-  │   ├── types.ts              # Shared TypeScript types
-  │   ├── constants.ts          # Environment constants
-  │   └── utils/
-  │       ├── dynamodb.ts       # DynamoDB helpers
-  │       ├── eventbridge.ts    # Event publishing
-  │       └── validation.ts     # Zod schemas
-  └── package.json
-```
+```mermaid
+graph TB
+    CLIENT["@co-cddo/isb-client<br/>v2.0.0 / v2.0.1"]
 
-**Lambda Layers**
-```
-source/layers/common/
-  └── nodejs/
-      └── node_modules/         # Shared dependencies
-          ├── @aws-sdk/          # AWS SDK v3
-          ├── zod/               # Validation
-          └── luxon/             # Date handling
+    subgraph "Consumers"
+        APPROVER["Approver (v2.0.1)"]
+        COSTS["Costs (v2.0.0)"]
+        DEPLOYER["Deployer (v2.0.0)"]
+    end
 
-source/layers/dependencies/
-  └── nodejs/
-      └── node_modules/         # Third-party deps
+    CLIENT -->|GitHub Release tarball| APPROVER
+    CLIENT -->|GitHub Release tarball| COSTS
+    CLIENT -->|GitHub Release tarball| DEPLOYER
+
+    subgraph "Client Internals"
+        SM["@aws-sdk/client-secrets-manager v3.992.0"]
+        TYPES["TypeScript type definitions"]
+        API["ISB API wrapper methods"]
+    end
+
+    CLIENT --- SM
+    CLIENT --- TYPES
+    CLIENT --- API
 ```
 
----
+**Distribution**: The client is distributed as a `.tgz` tarball via GitHub Releases, not a traditional npm registry. This means consumers pin to specific release URLs rather than semver ranges.
 
-### External Shared Dependencies
+**Version Skew**: The Approver uses v2.0.1 while Costs and Deployer use v2.0.0, creating a minor version discrepancy.
 
-**AWS SDK v3**
-- All TypeScript repos use @aws-sdk/* v3.700+
-- Potential version conflicts (3.654 vs 3.980)
+### ISB Core Internal Packages
 
-**CDK Versions**
-- ISB Core: v2.170.0
-- Approver: v2.170.0
-- Costs: v2.237.1 (newer)
-- **Issue**: Mixed CDK versions may cause construct incompatibilities
+```
+source/common/          # Shared TypeScript types and utilities
+source/layers/common/   # Lambda layer with shared dependencies
+source/layers/deps/     # Lambda layer with third-party deps
+source/frontend/        # React SPA (workspace: @amzn/innovation-sandbox-frontend)
+source/infrastructure/  # CDK stacks (workspace: @amzn/innovation-sandbox-infrastructure)
+```
 
-**Validation Library**
-- ISB Core: No zod
-- Approver: zod v3.24.0
-- Costs: zod v4.3.6 (major version difference)
-- Deployer: No zod
+### Lambda Powertools Usage
+
+| Repository | Logger | Metrics | Tracer | Idempotency | Parameters |
+|-----------|--------|---------|--------|-------------|------------|
+| Approver | v2.12.0 | v2.12.0 | - | v2.12.0 | v2.12.0 |
+| Billing Sep | v2.31.0 | v2.31.0 | v2.31.0 | - | - |
+| Costs | - | - | - | - | - |
+| Deployer | - | - | - | - | - |
+| ISB Core | - | - | - | - | - |
 
 ---
 
@@ -314,46 +235,18 @@ source/layers/dependencies/
 
 ### EventBridge Event Contracts
 
-**Published by ISB Core:**
-```typescript
-// LeaseApproved event
-interface LeaseApprovedEvent {
-  source: 'leases-api'
-  'detail-type': 'LeaseApproved'
-  detail: {
-    leaseId: {userEmail: string; uuid: string}
-    awsAccountId: string
-    approvedBy: string
-  }
-}
+All satellites depend on the event schema published by ISB Core. There is currently no schema versioning in place.
 
-// LeaseTerminated event
-interface LeaseTerminatedEvent {
-  source: 'leases-api'
-  'detail-type': 'LeaseTerminated'
-  detail: {
-    leaseId: {userEmail: string; uuid: string}
-    accountId: string
-    terminatedAt: number
-  }
-}
-```
+| Event | Publisher | Consumers | Breaking Change Risk |
+|-------|----------|-----------|---------------------|
+| LeaseRequested | ISB Core | Approver | High |
+| LeaseApproved | ISB Core, Approver | Lifecycle Mgr, Deployer | High |
+| LeaseDenied | Approver | Email notification | Low |
+| LeaseTerminated | ISB Core, Monitoring | Costs, Billing Sep, Cleanup | High |
+| CostDataCollected | Costs | Billing Sep | Medium |
+| DeploymentComplete | Deployer | Leases API | Medium |
 
-**Consumed by Satellites:**
-- Approver listens for: `LeaseRequested`
-- Deployer listens for: `LeaseApproved`
-- Costs listens for: `LeaseTerminated`
-- Billing Separator listens for: `LeaseTerminated`
-
-**Breaking Change Risk:**
-- If ISB Core changes event schema, all satellites affected
-- No schema versioning currently in place
-
----
-
-## DynamoDB Table Dependencies
-
-### Read/Write Matrix
+### DynamoDB Table Access Matrix
 
 | Table | ISB Core | Approver | Costs | Billing Sep | Deployer |
 |-------|----------|----------|-------|-------------|----------|
@@ -364,151 +257,115 @@ interface LeaseTerminatedEvent {
 | CostReports | - | R | R/W | R | - |
 | QuarantineStatus | - | - | - | R/W | - |
 
-**Legend:**
-- R/W: Read and Write
-- R: Read-only
-- -: No access
-
-**Cross-Account Access:**
-- All satellites in Hub account (568672915267)
-- All tables in same account
-- No cross-account DynamoDB access required
-
 ---
 
-## Deployment Automation
+## GitHub Actions Workflows
 
-### GitHub Actions Workflows
+### Repositories with CI/CD
 
-**Repositories with CI/CD:**
-- innovation-sandbox-on-aws-approver: `deploy.yml`
-- innovation-sandbox-on-aws-billing-seperator: `deploy.yml`, `pr-check.yml`
-- innovation-sandbox-on-aws-costs: `deploy.yml`, `ci.yml`
-- innovation-sandbox-on-aws-deployer: `ci.yml`
-- ndx: `infra.yaml`, `ci.yaml`, `test.yml`
-- ndx_try_aws_scenarios: `build-deploy.yml`
-- ndx-try-aws-scp: `terraform.yaml`
+| Repository | Workflows | Deploy Method |
+|-----------|-----------|---------------|
+| innovation-sandbox-on-aws-approver | `deploy.yml` | CDK deploy via OIDC |
+| innovation-sandbox-on-aws-billing-seperator | `deploy.yml`, `pr-check.yml` | CDK deploy via OIDC |
+| innovation-sandbox-on-aws-costs | `deploy.yml`, `ci.yml` | CDK deploy via OIDC |
+| innovation-sandbox-on-aws-deployer | `ci.yml` | CI only (deploy manual) |
+| ndx | `infra.yaml`, `ci.yaml`, `test.yml` | CDK + S3 deploy |
+| ndx_try_aws_scenarios | `build-deploy.yml` | S3 deploy |
+| ndx-try-aws-scp | `terraform.yaml` | Terraform apply |
 
-**Repositories without CI/CD:**
-- innovation-sandbox-on-aws (manual CDK deployment)
-- innovation-sandbox-on-aws-utils (manual scripts)
-- ndx-try-aws-lza (manual LZA pipeline)
-- ndx-try-aws-terraform (manual terraform apply)
-- ndx-try-aws-isb (empty)
+### Repositories without CI/CD
+
+| Repository | Deploy Method |
+|-----------|---------------|
+| innovation-sandbox-on-aws | Manual CDK deploy (`npm run deploy:all`) |
+| innovation-sandbox-on-aws-utils | Manual Python scripts |
+| innovation-sandbox-on-aws-client | Manual GitHub Release |
+| ndx-try-aws-lza | Manual LZA pipeline |
+| ndx-try-aws-terraform | Manual `terraform apply` |
+| ndx-try-aws-isb | Empty (no deployment) |
 
 ---
 
 ## Dependency Issues & Risks
 
-### Issue 1: Mixed AWS SDK Versions
+### Issue 1: AWS SDK v3 Version Fragmentation
 
-**Problem:**
-- ISB Core: @aws-sdk v3.654 - v3.758
-- Approver: @aws-sdk v3.700
-- Costs: @aws-sdk v3.980
-- Deployer: @aws-sdk v3.978
+**Spread**: v3.654.0 (ISB Core) to v3.1000.0 (Billing Separator) -- a gap of 346 minor versions.
 
-**Risk:** API incompatibilities, unexpected behavior
+**Risk**: API incompatibilities, missing features in older versions, inconsistent error handling.
 
-**Mitigation:** Standardize on v3.980+ across all repos
-
----
+**Recommendation**: Standardise on v3.995.0+ across all repos. The ISB Core is most urgently in need of an update.
 
 ### Issue 2: CDK Version Mismatch
 
-**Problem:**
-- ISB Core: aws-cdk-lib v2.170.0
-- Costs: aws-cdk-lib v2.237.1
+**Spread**: v2.170.0 (ISB Core, Approver) to v2.240.0 (Costs, Billing Sep) -- 70 minor versions apart.
 
-**Risk:** Construct compatibility issues
+**Risk**: Construct library incompatibilities, L2 construct API differences.
 
-**Mitigation:** Align to v2.237.1 (latest)
+**Recommendation**: Align all repositories to v2.240.0.
 
----
+### Issue 3: Zod Major Version Split
 
-### Issue 3: No Event Schema Versioning
+**Spread**: v3.24.0 (Approver) vs v4.3.6 (Costs, Billing Sep).
 
-**Problem:** EventBridge events have no version field
+**Risk**: Schema definitions between v3 and v4 are not compatible. Any shared schema validation across these components would fail.
 
-**Example:**
-```json
-{
-  "detail-type": "LeaseApproved",
-  // No "version": "1.0" field
-}
-```
+**Recommendation**: Migrate Approver to zod v4 to align with newer satellites.
 
-**Risk:** Breaking changes affect all consumers simultaneously
+### Issue 4: No Event Schema Versioning
 
-**Mitigation:** Add schema version field, support multiple versions
+**Problem**: EventBridge events have no version field. If ISB Core changes an event schema, all consuming satellites break simultaneously.
 
----
+**Recommendation**: Add a `schemaVersion` field to all events and support backward compatibility during transitions.
 
-### Issue 4: Uncoordinated Deployments
+### Issue 5: ISB Client Distribution via Tarball
 
-**Problem:** No enforced deployment order
+**Problem**: The `@co-cddo/isb-client` is distributed as a GitHub Release tarball URL rather than from a package registry. This makes version resolution opaque and updates difficult to track.
 
-**Risk:** Satellite deployed before ISB Core creates EventBridge bus
+**Recommendation**: Publish to GitHub Packages (npm) or a private registry for proper semver resolution.
 
-**Mitigation:** Document deployment order (this document), CI/CD orchestration
+### Issue 6: Mixed Test Frameworks
+
+**Problem**: Some repos use vitest, others use jest. The billing separator and ISB client use jest v30, while all other TypeScript repos use vitest v4.
+
+**Recommendation**: Standardise on vitest across all TypeScript repositories for consistency.
 
 ---
 
 ## Recommended Dependency Management
 
-### 1. Monorepo Consideration
+### 1. Shared Type Definitions
 
-**Current:** 12 separate repositories
-**Alternative:** Monorepo with workspaces
+Create and publish `@ndx-try/types` as a shared package:
 
-**Benefits:**
-- Shared dependency versions
-- Atomic updates across components
-- Easier refactoring
+```typescript
+// Event schemas
+export interface LeaseApprovedEvent { ... }
+export interface LeaseTerminatedEvent { ... }
 
-**Drawbacks:**
-- Larger repo size
-- Loss of independent versioning
+// DynamoDB schemas
+export interface Lease { ... }
+export interface SandboxAccount { ... }
 
-**Recommendation:** Keep separate repos, use dependency management tools
+// API contracts
+export interface CreateLeaseRequest { ... }
+```
 
----
+### 2. Dependency Pinning Strategy
 
-### 2. Dependency Pinning
+**Current**: Mix of exact (`3.992.0`) and caret (`^3.987.0`) ranges.
 
-**Current:** Mix of exact (`3.700.0`) and caret (`^3.700.0`)
-
-**Recommended:**
+**Recommended**: Use exact versions for AWS SDK and CDK to ensure reproducible builds:
 ```json
 {
-  "@aws-sdk/client-dynamodb": "3.980.0",  // Exact version
-  "aws-cdk-lib": "2.237.1"                 // Exact version
+  "@aws-sdk/client-dynamodb": "3.995.0",
+  "aws-cdk-lib": "2.240.0"
 }
 ```
 
-**Benefits:**
-- Reproducible builds
-- No surprise updates
+### 3. Renovate/Dependabot Coordination
 
----
-
-### 3. Shared Type Definitions
-
-**Create:** `@ndx-try/types` NPM package
-
-**Contents:**
-```typescript
-// Event schemas
-export interface LeaseApprovedEvent {...}
-
-// DynamoDB schemas
-export interface Lease {...}
-
-// API contracts
-export interface CreateLeaseRequest {...}
-```
-
-**Publish to:** Private NPM registry or GitHub Packages
+Configure automated dependency updates across all repositories with grouped PRs for AWS SDK updates to maintain version alignment.
 
 ---
 
@@ -517,9 +374,7 @@ export interface CreateLeaseRequest {...}
 - [00-repo-inventory.md](./00-repo-inventory.md) - Repository overview
 - [70-data-flows.md](./70-data-flows.md) - Data flow diagrams
 - [71-external-integrations.md](./71-external-integrations.md) - External APIs
+- [50-github-actions-inventory.md](./50-github-actions-inventory.md) - CI/CD workflows
 
 ---
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Complete - Based on package.json analysis
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

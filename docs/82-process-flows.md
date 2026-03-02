@@ -1,18 +1,15 @@
 # Process Flows
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Scope:** End-to-end user journeys and operational processes
-
----
+> **Last Updated**: 2026-03-02
+> **Sources**: repos/innovation-sandbox-on-aws, repos/innovation-sandbox-on-aws-approver, repos/innovation-sandbox-on-aws-costs, repos/innovation-sandbox-on-aws-deployer, repos/innovation-sandbox-on-aws-billing-seperator, repos/innovation-sandbox-on-aws-utils
 
 ## Executive Summary
 
-This document presents the complete user and operational journeys through the NDX:Try AWS platform, from initial discovery to production deployment. Each flow is documented with Mermaid diagrams showing the complete path through the system.
+This document presents the complete user and operational process flows through the NDX:Try AWS platform. It covers the end-to-end user journey from discovery to production adoption, the full lease lifecycle with all state transitions, the deployment pipeline for CloudFormation templates, the cost tracking cycle from termination to chargeback, and the operational runbooks for daily, weekly, and monthly maintenance activities.
 
 ---
 
-## Flow 1: Complete User Journey (Discovery → Production)
+## Flow 1: Complete User Journey (Discovery to Production)
 
 ### End-to-End User Experience
 
@@ -23,7 +20,7 @@ journey
       Browse GOV.UK: 5: User
       Find NDX website: 5: User
       Read about Try AWS: 5: User
-      Review scenario catalog: 4: User
+      Review scenario catalogue: 4: User
     section Signup
       Click "Request Sandbox": 5: User
       Redirected to ISB: 4: User
@@ -85,7 +82,7 @@ stateDiagram-v2
     Approved --> Provisioning: LeaseApproved event
 
     Provisioning --> AssignAccount: Find available account
-    AssignAccount --> MoveOU: Available → Active
+    AssignAccount --> MoveOU: Available to Active OU
     MoveOU --> GrantAccess: Identity Center permission set
     GrantAccess --> DeployTemplate: Deployer triggered
     DeployTemplate --> Active: CloudFormation complete
@@ -123,7 +120,7 @@ stateDiagram-v2
     ExtendQuarantine --> CostDataCheck: After 24h extension
 
     ReleaseAccount --> Cleanup: Account status = Available
-    Cleanup --> AWSNuke: Step Functions → CodeBuild
+    Cleanup --> AWSNuke: Step Functions to CodeBuild
 
     AWSNuke --> VerifyCleanup: AWS Nuke execution
     VerifyCleanup --> CleanupSuccess: Resources deleted
@@ -145,8 +142,8 @@ stateDiagram-v2
     end note
 
     note right of AIScoring
-        19 rules + AI assessment
-        (Bedrock Claude)
+        19 rules + Bedrock AI
+        (Claude 3 Sonnet)
     end note
 
     note right of DeployTemplate
@@ -211,10 +208,9 @@ sequenceDiagram
 
     EventBridge->>Deployer: Trigger deployment (LeaseApproved)
 
-    Deployer->>Leases API: GET /leases/{id}
-    Leases API-->>Deployer: Lease details + template info
+    Deployer->>Deployer: Use @co-cddo/isb-client
+    Deployer->>Deployer: Fetch lease details + template info
 
-    Deployer->>Deployer: Parse template configuration
     Deployer->>SecretsManager: Get GitHub token
     SecretsManager-->>Deployer: Personal access token
 
@@ -223,23 +219,19 @@ sequenceDiagram
         GitHub-->>Deployer: cdk.json found
         Deployer->>Deployer: Sparse clone repository
         Deployer->>Deployer: npm ci --ignore-scripts
-        Deployer->>Deployer: cdk synth → CloudFormation
+        Deployer->>Deployer: cdk synth to CloudFormation
     else CloudFormation Template
         Deployer->>GitHub: GET template.yaml
         GitHub-->>Deployer: CloudFormation YAML
     end
 
-    Deployer->>Deployer: Enrich parameters from lease data
-    Deployer->>Deployer: Add tags (LeaseId, CostCentre)
+    Deployer->>Deployer: Enrich parameters + add tags
 
     Deployer->>Pool Account: AssumeRole (OrganizationAccountAccessRole)
     Pool Account-->>Deployer: Temporary credentials
 
     Deployer->>Pool Account: CreateStack (CloudFormation)
     Pool Account-->>Deployer: StackId
-
-    Deployer->>Pool Account: DescribeStacks (poll status)
-    Pool Account-->>Deployer: CREATE_IN_PROGRESS
 
     loop Poll every 30s
         Deployer->>Pool Account: DescribeStacks
@@ -272,7 +264,7 @@ graph TB
     subgraph "T+0: Immediate Actions"
         B1[Billing Separator: Queue SQS message<br/>Visibility: 72h]
         B2[Cost Tracker: Create EventBridge Schedule<br/>Trigger: T+24h]
-        B3[Lifecycle Manager: Move account<br/>Active OU → CleanUp OU]
+        B3[Lifecycle Manager: Move account<br/>Active OU to CleanUp OU]
     end
 
     subgraph "T+24h: Cost Collection"
@@ -288,8 +280,7 @@ graph TB
     subgraph "T+24h: Budget Compliance Check"
         D1{Cost > Budget?}
         D2[Cost Collector: Publish BudgetOverage]
-        D3[Email Notification: Alert user]
-        D4[Finance Team: Flagged for review]
+        D3[Email Notification: Alert user + finance]
     end
 
     subgraph "T+72h: Billing Quarantine Release"
@@ -309,18 +300,8 @@ graph TB
         F3[CodeBuild: Execute AWS Nuke]
         F4[AWS Nuke: Delete all user resources]
         F5{Cleanup<br/>successful?}
-        F6[Move account: CleanUp → Available]
-        F7[Move account: CleanUp → Quarantine]
-        F8[Alert admin: Manual remediation]
-    end
-
-    subgraph "Monthly: Chargeback Reporting"
-        G1[Scheduled Lambda: 1st of month]
-        G2[Query CostReports: Previous month]
-        G3[Generate CSV: By org unit, user, lease]
-        G4[Upload to S3: chargeback/2024/02/report.csv]
-        G5[Finance Team: Download report]
-        G6[Finance Team: Process chargebacks]
+        F6[Move account: CleanUp to Available OU]
+        F7[Move account: CleanUp to Quarantine OU]
     end
 
     A1 --> A2 --> A3
@@ -329,7 +310,7 @@ graph TB
     B2 --> C1 --> C2 --> C3 --> C4 --> C5 --> C6 --> C7
 
     C6 --> D1
-    D1 -->|Yes| D2 --> D3 --> D4
+    D1 -->|Yes| D2 --> D3
     D1 -->|No| C7
 
     B1 --> E1 --> E2 --> E3 --> E4
@@ -340,15 +321,7 @@ graph TB
 
     F1 --> F2 --> F3 --> F4 --> F5
     F5 -->|Yes| F6
-    F5 -->|No| F7 --> F8
-
-    G1 --> G2 --> G3 --> G4 --> G5 --> G6
-
-    style A1 fill:#ffe1e1,stroke:#333
-    style C6 fill:#e1f5ff,stroke:#333
-    style E5 fill:#e1ffe1,stroke:#333
-    style F6 fill:#e1ffe1,stroke:#333
-    style F7 fill:#ffe1e1,stroke:#333
+    F5 -->|No| F7
 ```
 
 ---
@@ -361,70 +334,31 @@ graph TB
 graph TB
     start[LeaseRequested Event] --> sfn_start[Step Functions: Start Execution]
 
-    sfn_start --> validate[ValidateInput State]
-    validate --> fetch[FetchContext State]
+    sfn_start --> validate[Validate Input State]
+    validate --> fetch[Fetch Context State]
 
-    fetch --> history[Query user's lease history]
+    fetch --> history[Query user lease history]
     fetch --> org_policy[Query org unit policies]
     fetch --> template[Query lease template]
 
-    history --> parallel
-    org_policy --> parallel
-    template --> parallel
+    history & org_policy & template --> parallel[Parallel State: Execute All 19 Rules]
 
-    parallel[Parallel State: Execute All Rules]
+    parallel --> cat1[Category 1: User History<br/>R01-R04]
+    parallel --> cat2[Category 2: Org Policy<br/>R05-R08]
+    parallel --> cat3[Category 3: Request Validation<br/>R09-R12]
+    parallel --> cat4[Category 4: Financial<br/>R13-R15]
+    parallel --> cat5[Category 5: Risk Assessment<br/>R16-R19]
 
-    parallel --> cat1[Category 1: User History<br/>4 rules in parallel]
-    parallel --> cat2[Category 2: Org Policy<br/>4 rules in parallel]
-    parallel --> cat3[Category 3: Request Validation<br/>4 rules in parallel]
-    parallel --> cat4[Category 4: Financial<br/>3 rules in parallel]
-    parallel --> cat5[Category 5: Risk Assessment<br/>4 rules in parallel]
+    cat3 --> bedrock[Amazon Bedrock<br/>Claude 3 Sonnet<br/>us-east-1]
+    cat5 --> bedrock
 
-    cat1 --> r01[R01: Previous Lease Compliance]
-    cat1 --> r02[R02: Cost Overrun History]
-    cat1 --> r03[R03: Lease Duration Pattern]
-    cat1 --> r04[R04: Account Cleanup Success]
-
-    cat2 --> r05[R05: Budget Limit Compliance]
-    cat2 --> r06[R06: Allowed Regions]
-    cat2 --> r07[R07: Required Tags Present]
-    cat2 --> r08[R08: Permission Set Authorization]
-
-    cat3 --> r09[R09: Justification Quality AI]
-    cat3 --> r10[R10: Template Compatibility]
-    cat3 --> r11[R11: Lease Timing]
-    cat3 --> r12[R12: Rate Limit Check]
-
-    cat4 --> r13[R13: Current Spend vs Quota]
-    cat4 --> r14[R14: Cost Trend Analysis]
-    cat4 --> r15[R15: Budget Realism Check]
-
-    cat5 --> r16[R16: Anomaly Detection]
-    cat5 --> r17[R17: Concurrent Lease Limit]
-    cat5 --> r18[R18: OU Risk Score]
-    cat5 --> r19[R19: AI Holistic Risk]
-
-    r09 --> bedrock[Amazon Bedrock<br/>Claude 3 Sonnet]
-    r16 --> bedrock
-    r19 --> bedrock
-
-    bedrock --> r09
-    bedrock --> r16
-    bedrock --> r19
-
-    r01 & r02 & r03 & r04 --> aggregate
-    r05 & r06 & r07 & r08 --> aggregate
-    r09 & r10 & r11 & r12 --> aggregate
-    r13 & r14 & r15 --> aggregate
-    r16 & r17 & r18 & r19 --> aggregate
-
-    aggregate[Aggregate Scores State<br/>Weighted average calculation]
+    cat1 & cat2 & cat3 & cat4 & cat5 --> aggregate[Aggregate Scores<br/>Weighted average calculation]
 
     aggregate --> decision{Composite Score}
 
-    decision -->|>= 80| auto_approve[Auto-Approve]
-    decision -->|50-79| manual_review[Manual Review<br/>Wait for admin]
-    decision -->|< 50| auto_reject[Auto-Reject]
+    decision -->|">= 80"| auto_approve[Auto-Approve]
+    decision -->|"50-79"| manual_review[Manual Review<br/>Escalate to admin]
+    decision -->|"< 50"| auto_reject[Auto-Reject]
 
     auto_approve --> publish_approved[Publish LeaseApproved]
     manual_review --> admin_ui[Admin Dashboard]
@@ -433,10 +367,8 @@ graph TB
     admin_decision -->|Reject| publish_rejected[Publish LeaseDenied]
     auto_reject --> publish_rejected
 
-    publish_approved --> record_success[Record to ApprovalHistory DynamoDB]
-    publish_rejected --> record_success
-
-    record_success --> sfn_end[Step Functions: End]
+    publish_approved & publish_rejected --> record[Record to ApprovalHistory DDB]
+    record --> sfn_end[Step Functions: End]
 
     style bedrock fill:#ff9,stroke:#333
     style auto_approve fill:#9f9,stroke:#333
@@ -446,9 +378,9 @@ graph TB
 
 ---
 
-## Flow 6: Account Cleanup Process
+## Flow 6: Account Cleanup Process (AWS Nuke)
 
-### AWS Nuke Execution
+### Step Functions + CodeBuild Orchestration
 
 ```mermaid
 sequenceDiagram
@@ -465,7 +397,7 @@ sequenceDiagram
     EventBridge->>StepFunction: Trigger cleanup (LeaseTerminated)
 
     StepFunction->>InitLambda: Initialize Cleanup
-    InitLambda->>DynamoDB: Fetch lease & account details
+    InitLambda->>DynamoDB: Fetch lease and account details
     InitLambda->>AppConfig: Get nuke-config.yaml
     InitLambda->>AppConfig: Get global-config.yaml
     InitLambda-->>StepFunction: Return cleanup context
@@ -475,31 +407,21 @@ sequenceDiagram
     CodeBuild->>CodeBuild: Assume role in pool account
     CodeBuild->>PoolAccount: Validate IAM role
 
-    CodeBuild->>CodeBuild: Download AWS Nuke binary (v3.63.2)
-    CodeBuild->>PoolAccount: Inventory resources across regions
+    CodeBuild->>PoolAccount: Inventory resources across us-east-1, us-west-2
 
     loop For each region
-        CodeBuild->>PoolAccount: List EC2 instances
-        CodeBuild->>PoolAccount: List S3 buckets
-        CodeBuild->>PoolAccount: List IAM roles
-        CodeBuild->>PoolAccount: List Lambda functions
-        CodeBuild->>PoolAccount: List CloudFormation stacks
+        CodeBuild->>PoolAccount: List EC2, S3, IAM, Lambda, CFN resources
     end
 
     CodeBuild->>CodeBuild: Apply nuke-config filters<br/>(protect ISB resources)
 
-    CodeBuild->>PoolAccount: Delete EC2 instances
-    CodeBuild->>PoolAccount: Delete S3 buckets (empty first)
-    CodeBuild->>PoolAccount: Delete Lambda functions
-    CodeBuild->>PoolAccount: Delete CloudFormation stacks
-    CodeBuild->>PoolAccount: Delete IAM roles (non-protected)
-
+    CodeBuild->>PoolAccount: Delete all user-created resources
     CodeBuild->>PoolAccount: Re-inventory resources
     PoolAccount-->>CodeBuild: Resource counts
 
     alt All resources deleted
         CodeBuild-->>StepFunction: SUCCESS
-        StepFunction->>Organizations: Move account (CleanUp → Available)
+        StepFunction->>Organizations: MoveAccount (CleanUp to Available OU)
         StepFunction->>DynamoDB: Update account status=Available
         StepFunction->>EventBridge: Publish AccountCleaned
     else Resources remain
@@ -510,13 +432,55 @@ sequenceDiagram
             StepFunction->>StepFunction: Wait 5 minutes
             StepFunction->>CodeBuild: StartBuild (retry)
         else Max retries exceeded
-            StepFunction->>Organizations: Move account (CleanUp → Quarantine)
+            StepFunction->>Organizations: MoveAccount (CleanUp to Quarantine OU)
             StepFunction->>DynamoDB: Update account status=Quarantine
             StepFunction->>EventBridge: Publish AccountQuarantined
-            StepFunction->>EventBridge: Alert admin (manual remediation)
         end
     end
 ```
+
+---
+
+## Flow 7: Pool Account Provisioning (Manual)
+
+### Using innovation-sandbox-on-aws-utils
+
+The `innovation-sandbox-on-aws-utils` repository contains Python scripts for manual pool account operations:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Operator
+    participant create_sandbox_pool_account.py
+    participant Organizations
+    participant ISB API
+    participant DynamoDB
+
+    Operator->>create_sandbox_pool_account.py: Run script<br/>(pool name, email)
+    create_sandbox_pool_account.py->>Organizations: CreateAccount<br/>(pool-NNN, email@dsit.gov.uk)
+    Organizations-->>create_sandbox_pool_account.py: Account ID
+
+    create_sandbox_pool_account.py->>Organizations: MoveAccount<br/>(to ndx_InnovationSandboxAccountPool OU)
+    Organizations-->>create_sandbox_pool_account.py: Success
+
+    create_sandbox_pool_account.py->>ISB API: Register account
+    ISB API->>DynamoDB: PutItem (SandboxAccountTable)
+    DynamoDB-->>ISB API: Success
+    ISB API-->>create_sandbox_pool_account.py: Account registered
+
+    create_sandbox_pool_account.py-->>Operator: Pool account ready
+```
+
+### Available Utility Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `create_sandbox_pool_account.py` | Create and register new pool account |
+| `assign_lease.py` | Manually assign a lease to a user |
+| `terminate_lease.py` | Force-terminate an active lease |
+| `force_release_account.py` | Release a quarantined account |
+| `create_user.py` | Create user in Identity Center |
+| `clean_console_state.py` | Reset console preferences |
 
 ---
 
@@ -525,39 +489,66 @@ sequenceDiagram
 ### Daily Operations Checklist
 
 ```
-□ Monitor quarantine queue (should be < 2 accounts)
-□ Review cost overages from previous day
-□ Check deployer success rate (should be > 95%)
-□ Verify approver scoring (80%+ auto-approval target)
-□ Review manual approval queue (should be < 10 pending)
-□ Check pool capacity (should have >= 5 available accounts)
-□ Review CloudWatch alarms (should have 0 active)
-□ Scan EventBridge DLQ (should be empty)
-□ Verify Cost Explorer quota usage (should be < 80%)
+[ ] Monitor quarantine queue (target: < 2 accounts)
+[ ] Review cost overages from previous day
+[ ] Check deployer success rate (target: > 95%)
+[ ] Verify approver scoring (target: 80%+ auto-approval)
+[ ] Review manual approval queue (target: < 10 pending)
+[ ] Check pool capacity (target: >= 5 available accounts)
+[ ] Review CloudWatch alarms (target: 0 active)
+[ ] Scan EventBridge DLQ (target: empty)
+[ ] Verify Cost Explorer quota usage (target: < 80%)
 ```
 
 ### Weekly Operations
 
 ```
-□ Update ukps-domains whitelist from GitHub
-□ Review quarantined accounts (manual cleanup if needed)
-□ Generate pool utilization report
-□ Review Bedrock AI cost trends
-□ Rotate GitHub API token (if expiring)
-□ Update Slack channel with metrics summary
+[ ] Update ukps-domains whitelist from govuk-digital-backbone
+[ ] Review quarantined accounts (manual cleanup if needed)
+[ ] Generate pool utilisation report
+[ ] Review Bedrock AI cost trends
+[ ] Rotate GitHub API token (if approaching expiry)
+[ ] Update team channel with metrics summary
 ```
 
 ### Monthly Operations
 
 ```
-□ Generate chargeback reports (1st of month)
-□ Send cost reports to finance team
-□ Review capacity planning (add pool accounts if needed)
-□ Audit permission sets in Identity Center
-□ Review and update lease templates
-□ Conduct security audit (access logs, IAM policies)
-□ Update documentation with operational learnings
+[ ] Generate chargeback reports (1st of month)
+[ ] Send cost reports to finance team
+[ ] Review capacity planning (add pool accounts if needed)
+[ ] Audit permission sets in Identity Center
+[ ] Review and update lease templates
+[ ] Conduct security audit (access logs, IAM policies)
+[ ] Check upstream ISB fork status (currently 10 commits behind)
+[ ] Update documentation with operational learnings
 ```
+
+---
+
+## Emergency Procedures
+
+### Pool Exhaustion (< 2 Available Accounts)
+
+1. Check quarantine queue for accounts ready to release
+2. Run `force_release_account.py` on oldest quarantined accounts
+3. If insufficient, create new pool accounts with `create_sandbox_pool_account.py`
+4. Escalate if capacity planning indicates sustained demand increase
+
+### Cleanup Failure (Account Stuck in Quarantine)
+
+1. Review CodeBuild logs for the failed Nuke execution
+2. Identify resources that could not be deleted
+3. Manually delete residual resources via AWS Console
+4. Run `force_release_account.py` to move account back to Available OU
+5. Document failure pattern for future nuke-config updates
+
+### Cost Explorer Outage
+
+1. Cost collection Lambda will retry via DLQ
+2. Billing separator extends quarantine automatically (up to 96h)
+3. At 96h, force-release with alert to ops team
+4. Estimate costs manually from CloudWatch metrics if needed
 
 ---
 
@@ -565,10 +556,10 @@ sequenceDiagram
 
 - [70-data-flows.md](./70-data-flows.md) - Detailed data transformations
 - [11-lease-lifecycle.md](./11-lease-lifecycle.md) - Lease state machine
-- [20-approver-system.md](./20-approver-system.md) - Scoring rules
+- [20-approver-system.md](./20-approver-system.md) - Scoring rules detail
+- [23-deployer.md](./23-deployer.md) - Deployer architecture
+- [21-billing-separator.md](./21-billing-separator.md) - Billing separator
+- [24-utils.md](./24-utils.md) - Utility scripts
 
 ---
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Complete - End-to-end process documentation
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

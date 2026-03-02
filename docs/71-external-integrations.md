@@ -1,21 +1,54 @@
 # External Integrations
 
-**Document Version:** 1.0
-**Date:** 2026-02-03
-**Scope:** All external system integrations for NDX:Try AWS
-
----
+> **Last Updated**: 2026-03-02
+> **Sources**: repos/innovation-sandbox-on-aws-approver, repos/innovation-sandbox-on-aws-costs, repos/innovation-sandbox-on-aws-deployer, repos/innovation-sandbox-on-aws-billing-seperator, .state/discovered-accounts.json, .state/org-ous.json
 
 ## Executive Summary
 
-The NDX:Try AWS architecture integrates with multiple external systems, both AWS-native and third-party. This document catalogs all integration points, authentication mechanisms, data exchange patterns, and failure modes.
+The NDX:Try AWS platform integrates with multiple external systems beyond the core ISB infrastructure. These integrations span AWS-native services (Cost Explorer, Bedrock, Identity Center, Organizations), third-party APIs (GitHub), and cross-organizational data sources (ukps-domains for UK public sector domain whitelisting). Each integration has distinct authentication patterns, failure modes, and data exchange contracts.
 
-**Key External Systems:**
-1. ukps-domains (govuk-digital-backbone) - Domain whitelist
-2. AWS Cost Explorer API
-3. AWS Identity Center (SSO)
-4. Amazon Bedrock AI
-5. GitHub API (for deployment)
+---
+
+## Integration Map
+
+```mermaid
+graph TB
+    subgraph "External Systems"
+        UKPS[ukps-domains<br/>GitHub - govuk-digital-backbone]
+        CE[Cost Explorer API<br/>AWS - us-east-1]
+        IDC[Identity Center<br/>AWS - Global]
+        BEDROCK[Amazon Bedrock<br/>AWS - us-east-1]
+        GITHUB[GitHub API<br/>co-cddo repos]
+        ORGS[AWS Organizations<br/>Global]
+        COGNITO[Amazon Cognito<br/>AWS - us-east-1]
+    end
+
+    subgraph "Hub Account (568672915267)"
+        APPROVER[Approver]
+        COSTS[Cost Tracker]
+        LIFECYCLE[Lifecycle Mgr]
+        DEPLOYER[Deployer]
+        FRONTEND[ISB Frontend]
+        BILLING[Billing Separator]
+    end
+
+    UKPS -->|Domain list via S3| APPROVER
+    CE -->|Cost data| COSTS
+    IDC -->|User auth + access grants| LIFECYCLE
+    BEDROCK -->|AI scoring| APPROVER
+    GITHUB -->|Templates + CDK detection| DEPLOYER
+    ORGS -->|OU moves + account mgmt| LIFECYCLE
+    ORGS -->|Account creation| BILLING
+    COGNITO -->|JWT tokens| FRONTEND
+
+    style UKPS fill:#ddf,stroke:#333
+    style CE fill:#ddf,stroke:#333
+    style IDC fill:#ddf,stroke:#333
+    style BEDROCK fill:#ddf,stroke:#333
+    style GITHUB fill:#fdd,stroke:#333
+    style ORGS fill:#ddf,stroke:#333
+    style COGNITO fill:#ddf,stroke:#333
+```
 
 ---
 
@@ -23,12 +56,15 @@ The NDX:Try AWS architecture integrates with multiple external systems, both AWS
 
 ### Overview
 
-**Repository:** `govuk-digital-backbone/ukps-domains`
-**Purpose:** Authoritative list of UK public sector email domains for approver whitelist
-**Owner:** GDS (Government Digital Service)
-**Integration Point:** Approver system domain verification
+| Property | Value |
+|----------|-------|
+| **Repository** | `govuk-digital-backbone/ukps-domains` |
+| **Purpose** | Authoritative list of UK public sector email domains |
+| **Owner** | GDS (Government Digital Service) |
+| **Consumer** | Approver system (domain verification rule) |
+| **Update Frequency** | Weekly (manual) |
 
-### Architecture
+### Data Flow
 
 ```mermaid
 graph LR
@@ -47,87 +83,30 @@ graph LR
 
     UKPS -->|Manual download| Ops
     Ops -->|Upload JSON| S3
-    S3 -->|Read| Lambda
+    S3 -->|Read on invocation| Lambda
 ```
 
 ### Data Format
 
-**ukps-domains Structure (JSON)**
 ```json
 {
   "domains": [
-    {
-      "domain": "gov.uk",
-      "organisation": "UK Government",
-      "category": "central_government"
-    },
-    {
-      "domain": "nhs.uk",
-      "organisation": "National Health Service",
-      "category": "nhs"
-    },
-    {
-      "domain": "police.uk",
-      "organisation": "UK Police Forces",
-      "category": "police"
-    }
+    {"domain": "gov.uk", "organisation": "UK Government", "category": "central_government"},
+    {"domain": "nhs.uk", "organisation": "National Health Service", "category": "nhs"},
+    {"domain": "police.uk", "organisation": "UK Police Forces", "category": "police"}
   ],
   "lastUpdated": "2026-01-15T10:00:00Z",
   "version": "2.3.1"
 }
 ```
 
-**Approver Usage**
-```typescript
-// Rule 5: Domain Verification
-async function verifyDomain(email: string): Promise<boolean> {
-  const domain = email.split('@')[1]
-
-  // Fetch domain list from S3
-  const s3 = new S3Client({})
-  const response = await s3.getObject({
-    Bucket: 'approver-domain-list-568672915267',
-    Key: 'user_domains.json'
-  })
-
-  const domainList = JSON.parse(await response.Body.transformToString())
-
-  // Check if domain is whitelisted
-  return domainList.domains.some((d: any) =>
-    domain === d.domain || domain.endsWith('.' + d.domain)
-  )
-}
-```
-
-### Update Process
-
-**Frequency:** Weekly (manual)
-
-**Steps:**
-1. Operations team pulls latest from `govuk-digital-backbone/ukps-domains`
-2. Transform to approver format (if needed)
-3. Upload to S3 bucket `approver-domain-list-568672915267/user_domains.json`
-4. Approver Lambda reads on each invocation (no caching)
-
 ### Failure Modes
 
 | Failure | Impact | Mitigation |
 |---------|--------|------------|
 | ukps-domains repo unavailable | Cannot update whitelist | Use cached S3 version |
-| S3 bucket inaccessible | All lease requests fail domain check | CloudWatch alarm, fallback to hardcoded list |
-| Stale domain list | New domains rejected | Weekly update SLA |
-
-### Integration Dependencies
-
-```
-ukps-domains (GitHub)
-  ↓ (manual download)
-S3 (approver-domain-list)
-  ↓ (s3:GetObject)
-Approver Lambda (Rule 5)
-  ↓ (pass/fail)
-Lease Approval Decision
-```
+| S3 bucket inaccessible | All domain checks fail | CloudWatch alarm, fallback list |
+| Stale domain list | Legitimate new domains rejected | Weekly update SLA |
 
 ---
 
@@ -135,165 +114,38 @@ Lease Approval Decision
 
 ### Overview
 
-**Service:** AWS Cost Explorer
-**Purpose:** Retrieve actual AWS spend for sandbox accounts
-**Authentication:** IAM role with `ce:GetCostAndUsage`
-**Rate Limits:** 100 requests/hour, 5 TPS
-**Data Lag:** 24-48 hours
+| Property | Value |
+|----------|-------|
+| **Service** | AWS Cost Explorer |
+| **Purpose** | Retrieve actual AWS spend for sandbox accounts |
+| **Authentication** | IAM role assumption (Hub to Org Mgmt) |
+| **Rate Limits** | 100 requests/hour, 5 TPS |
+| **Data Lag** | 24-48 hours |
+| **Region** | us-east-1 (Cost Explorer endpoint) |
 
-### API Usage Pattern
+### Cross-Account Access Pattern
 
-**Cost Collector Lambda Query**
-```python
-import boto3
-from datetime import datetime, timedelta
+```mermaid
+sequenceDiagram
+    participant Cost Collector
+    participant STS
+    participant Org Mgmt (955063685555)
 
-ce = boto3.client('ce', region_name='us-east-1')
-
-def get_account_costs(account_id, start_date, end_date):
-    """
-    Query Cost Explorer for account-specific costs.
-    """
-    response = ce.get_cost_and_usage(
-        TimePeriod={
-            'Start': start_date.strftime('%Y-%m-%d'),
-            'End': end_date.strftime('%Y-%m-%d')
-        },
-        Granularity='DAILY',
-        Metrics=['UnblendedCost', 'UsageQuantity'],
-        GroupBy=[
-            {'Type': 'DIMENSION', 'Key': 'SERVICE'},
-            {'Type': 'DIMENSION', 'Key': 'REGION'}
-        ],
-        Filter={
-            'Dimensions': {
-                'Key': 'LINKED_ACCOUNT',
-                'Values': [account_id]
-            }
-        }
-    )
-
-    return response
-```
-
-### Response Structure
-
-**Example Response**
-```json
-{
-  "ResultsByTime": [
-    {
-      "TimePeriod": {
-        "Start": "2024-01-01",
-        "End": "2024-01-02"
-      },
-      "Total": {},
-      "Groups": [
-        {
-          "Keys": ["Amazon EC2", "eu-west-2"],
-          "Metrics": {
-            "UnblendedCost": {
-              "Amount": "45.67",
-              "Unit": "USD"
-            },
-            "UsageQuantity": {
-              "Amount": "24",
-              "Unit": "Hours"
-            }
-          }
-        }
-      ],
-      "Estimated": false
-    }
-  ],
-  "NextPageToken": null
-}
+    Cost Collector->>STS: AssumeRole<br/>arn:aws:iam::955063685555:role/CostExplorerReadRole
+    STS->>Org Mgmt (955063685555): Validate trust policy
+    Org Mgmt (955063685555)-->>STS: Trust confirmed
+    STS-->>Cost Collector: Temporary credentials
+    Cost Collector->>Org Mgmt (955063685555): ce:GetCostAndUsage<br/>(filter by linked account)
 ```
 
 ### Rate Limiting Strategy
 
-**Problem:** 100 requests/hour limit can bottleneck at scale
+The `innovation-sandbox-on-aws-costs` repository uses `@aws-sdk/client-cost-explorer` v3.995.0 with the following mitigations:
 
-**Mitigation:**
-
-1. **Batch Queries** - Query multiple accounts in single request
-```python
-# Single request for up to 100 accounts
-Filter={
-    'Dimensions': {
-        'Key': 'LINKED_ACCOUNT',
-        'Values': ['account1', 'account2', ..., 'account100']
-    }
-}
-```
-
-2. **Reserved Concurrency** - Lambda limited to 10 concurrent executions
-```yaml
-CostCollectorLambda:
-  ReservedConcurrentExecutions: 10
-```
-
-3. **Exponential Backoff** - Retry on throttling
-```python
-import time
-from botocore.exceptions import ClientError
-
-def query_with_backoff(ce, params, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            return ce.get_cost_and_usage(**params)
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'ThrottlingException':
-                wait = 2 ** attempt
-                time.sleep(wait)
-            else:
-                raise
-    raise Exception('Max retries exceeded')
-```
-
-4. **Caching** - Never re-query same lease/date range
-```python
-# Check DynamoDB before querying Cost Explorer
-existing = dynamodb.get_item(
-    TableName='CostReports',
-    Key={'leaseId': lease_id}
-)
-
-if existing.get('Item'):
-    return existing['Item']  # Use cached data
-```
-
-### Cross-Account Access
-
-**IAM Role in Organization Management Account**
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": "ce:GetCostAndUsage",
-      "Resource": "*"
-    }
-  ]
-}
-```
-
-**Assume Role from Hub Account**
-```python
-sts = boto3.client('sts')
-assumed_role = sts.assume_role(
-    RoleArn='arn:aws:iam::955063685555:role/CostExplorerReadRole',
-    RoleSessionName='CostCollectorSession'
-)
-
-ce = boto3.client(
-    'ce',
-    aws_access_key_id=assumed_role['Credentials']['AccessKeyId'],
-    aws_secret_access_key=assumed_role['Credentials']['SecretAccessKey'],
-    aws_session_token=assumed_role['Credentials']['SessionToken']
-)
-```
+1. **Batch Queries**: Query multiple accounts in a single request using `LINKED_ACCOUNT` dimension filter
+2. **Reserved Concurrency**: Lambda limited to prevent parallel Cost Explorer bursts
+3. **Exponential Backoff**: Retry on `ThrottlingException`
+4. **Caching**: Never re-query same lease/date range (check DynamoDB first)
 
 ### Failure Modes
 
@@ -310,72 +162,34 @@ ce = boto3.client(
 
 ### Overview
 
-**Service:** AWS IAM Identity Center (successor to AWS SSO)
-**Purpose:** User authentication and account access provisioning
-**Authentication:** IAM role with `sso:*`, `identitystore:*`
-**Identity Store:** d-xxxxxxxxxx (specific to deployment)
+| Property | Value |
+|----------|-------|
+| **Service** | AWS IAM Identity Center |
+| **Purpose** | User authentication and account access provisioning |
+| **Authentication** | IAM role with `sso:*`, `identitystore:*` |
+| **Identity Store** | Configured via ISB IDC Stack |
+| **Consumer** | Lifecycle Manager Lambda |
 
 ### Integration Points
 
 **1. User Authentication** (ISB Frontend)
 ```
-User → Cognito User Pool → Identity Center → SAML assertion → JWT token
+User -> Cognito User Pool -> Identity Center -> SAML assertion -> JWT token
 ```
 
-**2. Permission Set Assignment** (Lifecycle Manager)
-```python
-import boto3
-
-sso = boto3.client('sso-admin')
-
-def assign_user_to_account(user_id, account_id, permission_set_arn):
-    """
-    Grant user access to sandbox account.
-    """
-    response = sso.create_account_assignment(
-        InstanceArn='arn:aws:sso:::instance/ssoins-xxxxxxxxxxxx',
-        TargetId=account_id,
-        TargetType='AWS_ACCOUNT',
-        PermissionSetArn=permission_set_arn,
-        PrincipalType='USER',
-        PrincipalId=user_id
-    )
-
-    return response['AccountAssignmentCreationStatus']
+**2. Permission Set Assignment** (on lease approval)
+```
+Lifecycle Manager -> Identity Center -> CreateAccountAssignment
+  TargetId: pool account ID
+  PrincipalType: USER
+  PermissionSetArn: IsbUserPermissionSet
 ```
 
-**3. Permission Set Definitions**
+**3. Permission Set Revocation** (on lease termination)
 ```
-ISB uses custom permission sets:
-- IsbUserPermissionSet: Read-only access + specific services
-- IsbAdminPermissionSet: Full access (for admins)
-- IsbManagerPermissionSet: Limited management (for managers)
-```
-
-### Data Structures
-
-**User Object (from Identity Center)**
-```json
-{
-  "UserId": "user-abc-123-xyz",
-  "UserName": "user@example.gov.uk",
-  "Name": {
-    "FamilyName": "Smith",
-    "GivenName": "Jane"
-  },
-  "Emails": [
-    {
-      "Value": "user@example.gov.uk",
-      "Primary": true
-    }
-  ],
-  "Active": true
-}
-```
-
-**Permission Set ARN**
-```
-arn:aws:sso:::permissionSet/ssoins-xxxxxxxxxxxx/ps-abcdef123456
+Lifecycle Manager -> Identity Center -> DeleteAccountAssignment
+  TargetId: pool account ID
+  PrincipalType: USER
 ```
 
 ### Event Flow
@@ -405,7 +219,7 @@ sequenceDiagram
 
     User->>ISB Frontend: Click "Access Account"
     ISB Frontend->>Identity Center: GetSignInUrl
-    Identity Center-->>ISB Frontend: https://signin.aws.amazon.com/...
+    Identity Center-->>ISB Frontend: Console sign-in URL
     ISB Frontend-->>User: Redirect to AWS Console
 ```
 
@@ -424,110 +238,37 @@ sequenceDiagram
 
 ### Overview
 
-**Service:** Amazon Bedrock
-**Model:** Claude 3 Sonnet (anthropic.claude-3-sonnet-20240229-v1:0)
-**Purpose:** AI-enhanced risk assessment for lease approvals
-**Region:** us-east-1 (Bedrock model availability)
-**Cost:** ~$0.005-0.01 per approval
+| Property | Value |
+|----------|-------|
+| **Service** | Amazon Bedrock |
+| **Model** | Claude 3 Sonnet (anthropic.claude-3-sonnet-20240229-v1:0) |
+| **Purpose** | AI-enhanced risk assessment for lease approvals |
+| **Region** | us-east-1 (Bedrock model availability) |
+| **Consumer** | Approver Lambda (rules R09, R16, R19) |
+| **Cost** | ~$0.005-0.01 per approval |
 
 ### API Usage
 
-**Justification Quality Assessment**
-```python
-import boto3
-import json
+The Approver uses `@aws-sdk/client-bedrock-runtime` v3.987.0 to invoke Claude 3 Sonnet for three scoring rules:
 
-bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
+- **R09 Justification Quality**: Evaluates the business case text
+- **R16 Anomaly Detection**: Identifies unusual request patterns
+- **R19 Holistic Risk**: Overall risk scoring with context
 
-def assess_justification(text, context):
-    """
-    Use Claude to score justification quality.
-    """
-    prompt = f"""You are evaluating a sandbox account request.
+### Cost Profile
 
-User's Justification:
-{text}
+| Metric | Value |
+|--------|-------|
+| Input tokens per request | ~400 |
+| Output tokens per request | ~80 |
+| Cost per request | ~$0.0024 |
+| Monthly cost (1000 approvals) | ~$2.40 |
 
-Context:
-- Requested Budget: £{context['budget']}
-- Duration: {context['duration']} days
-- User's Previous Leases: {context['leaseHistory']}
+### Data Privacy
 
-Assess the quality of this justification on a scale of 0-100.
-
-Return ONLY a JSON object:
-{{
-  "score": <0-100>,
-  "reasoning": "<brief explanation>",
-  "redFlags": ["<flag1>", "<flag2>"]
-}}
-"""
-
-    response = bedrock.invoke_model(
-        modelId='anthropic.claude-3-sonnet-20240229-v1:0',
-        body=json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 500,
-            "temperature": 0.3,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        })
-    )
-
-    result = json.loads(response['body'].read())
-    assessment = json.loads(result['content'][0]['text'])
-
-    return assessment
-```
-
-### Response Structure
-
-**Example Response**
-```json
-{
-  "id": "msg_abc123",
-  "type": "message",
-  "role": "assistant",
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"score\": 85, \"reasoning\": \"Clear business justification with specific use case. Budget aligns with stated requirements.\", \"redFlags\": []}"
-    }
-  ],
-  "model": "claude-3-sonnet-20240229",
-  "stop_reason": "end_turn",
-  "usage": {
-    "input_tokens": 256,
-    "output_tokens": 42
-  }
-}
-```
-
-### Cost Optimization
-
-**Pricing (Claude 3 Sonnet)**
-- Input: $3 / million tokens
-- Output: $15 / million tokens
-
-**Typical Request**
-- Input: ~400 tokens (prompt + context)
-- Output: ~80 tokens (JSON response)
-- **Cost per request**: $0.0024
-
-**Monthly Cost (1000 approvals)**
-- Total: $2.40/month
-
-**Caching Strategy**
-```python
-# Cache common prompt templates
-@cache(ttl=3600)
-def get_prompt_template():
-    return """You are evaluating..."""
-```
+- Bedrock configured to NOT retain data for training
+- Justification text may contain PII (names, emails)
+- API version `bedrock-2023-05-31` ensures no data retention
 
 ### Failure Modes
 
@@ -536,25 +277,7 @@ def get_prompt_template():
 | Bedrock unavailable | AI rules return neutral score (50) | Fallback scoring, manual review triggered |
 | Model throttling | Delayed approval | Retry with backoff, queue requests |
 | Malformed response | Cannot parse JSON | Default to manual review |
-| High latency (>30s) | Timeout | Adjust Lambda timeout, async processing |
-
-### Data Privacy
-
-**PII Handling**
-- Justification text may contain names, emails
-- **Mitigation**: Bedrock configured to NOT retain data for training
-- **Setting**: `anthropic_version: "bedrock-2023-05-31"` (no data retention)
-
-**Bedrock Guardrails**
-```python
-# Enable content filtering
-bedrock.invoke_model(
-    modelId='...',
-    guardrailIdentifier='guardrail-abc123',
-    guardrailVersion='1',
-    body=...
-)
-```
+| High latency (>30s) | Lambda timeout | Adjusted Lambda timeout, async processing |
 
 ---
 
@@ -562,114 +285,29 @@ bedrock.invoke_model(
 
 ### Overview
 
-**Service:** GitHub REST API v3
-**Purpose:** Fetch CloudFormation templates and detect CDK projects
-**Authentication:** Personal Access Token (stored in Secrets Manager)
-**Rate Limit:** 5000 requests/hour (authenticated)
+| Property | Value |
+|----------|-------|
+| **Service** | GitHub REST API v3 |
+| **Purpose** | Fetch CloudFormation templates and CDK projects |
+| **Authentication** | Personal Access Token (Secrets Manager) |
+| **Rate Limit** | 5000 requests/hour (authenticated) |
+| **Consumer** | Deployer Lambda |
 
 ### API Usage
 
-**1. CDK Detection**
-```typescript
-import { Octokit } from '@octokit/rest'
+The Deployer (`innovation-sandbox-on-aws-deployer`) uses `@aws-sdk/client-secrets-manager` v3.993.0 to retrieve the GitHub token, then:
 
-async function isCdkProject(repoUrl: string): Promise<boolean> {
-  const octokit = new Octokit({
-    auth: process.env.GITHUB_TOKEN
-  })
-
-  const [owner, repo] = parseRepoUrl(repoUrl)
-
-  try {
-    // Check for cdk.json
-    await octokit.repos.getContent({
-      owner,
-      repo,
-      path: 'cdk.json'
-    })
-    return true
-  } catch (error) {
-    if (error.status === 404) {
-      return false
-    }
-    throw error
-  }
-}
-```
-
-**2. Sparse Clone (for CDK projects)**
-```bash
-# Deployer Lambda executes in /tmp
-git init
-git remote add origin https://github.com/co-cddo/ndx_try_aws_scenarios.git
-git config core.sparseCheckout true
-echo "cloudformation/scenarios/council-chatbot/*" >> .git/info/sparse-checkout
-git pull origin main
-```
-
-**3. Template Fetch (for CloudFormation)**
-```typescript
-async function fetchTemplate(repoUrl: string, templatePath: string): Promise<string> {
-  const octokit = new Octokit({auth: process.env.GITHUB_TOKEN})
-  const [owner, repo] = parseRepoUrl(repoUrl)
-
-  const response = await octokit.repos.getContent({
-    owner,
-    repo,
-    path: templatePath,
-    mediaType: {format: 'raw'}
-  })
-
-  return response.data as string
-}
-```
-
-### Rate Limiting
-
-**GitHub API Limits**
-- Authenticated: 5000 req/hour
-- Unauthenticated: 60 req/hour
-
-**NDX Usage**
-- Deployer triggered on each LeaseApproved event
-- ~1-2 API calls per deployment
-- Typical: ~100 deployments/day = ~200 API calls/day
-- **Well within limit** (5000/hour = 120,000/day)
-
-**Rate Limit Monitoring**
-```typescript
-const rateLimit = await octokit.rateLimit.get()
-console.log({
-  limit: rateLimit.data.rate.limit,
-  remaining: rateLimit.data.rate.remaining,
-  reset: new Date(rateLimit.data.rate.reset * 1000)
-})
-```
+1. **CDK Detection**: Check for `cdk.json` in the repository
+2. **Sparse Clone**: For CDK projects, clone only the required path
+3. **Template Fetch**: For CloudFormation, download the template YAML directly
 
 ### Authentication
 
-**Secrets Manager Storage**
-```json
-{
-  "SecretId": "github-deployer-token",
-  "SecretString": "{\"token\":\"ghp_xxxxxxxxxxxx\"}"
-}
+```
+Secrets Manager -> "github-deployer-token" -> ghp_xxxxxxxxxxxx
 ```
 
-**Lambda Retrieval**
-```typescript
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'
-
-async function getGitHubToken(): Promise<string> {
-  const client = new SecretsManagerClient({})
-  const response = await client.send(new GetSecretValueCommand({
-    SecretId: 'github-deployer-token'
-  }))
-
-  const secret = JSON.parse(response.SecretString!)
-  return secret.token
-}
-```
+The Deployer also uses `@aws-sdk/client-ssm` for parameter store lookups for ISB API configuration used by the `@co-cddo/isb-client` library.
 
 ### Failure Modes
 
@@ -683,39 +321,61 @@ async function getGitHubToken(): Promise<string> {
 
 ---
 
-## Integration Dependency Diagram
+## Integration 6: AWS Organizations
 
-```mermaid
-graph TB
-    subgraph "External Systems"
-        UKPS[ukps-domains<br/>GitHub]
-        CE[Cost Explorer API<br/>AWS]
-        IDC[Identity Center<br/>AWS]
-        BEDROCK[Bedrock AI<br/>AWS]
-        GITHUB[GitHub API<br/>Public]
-    end
+### Overview
 
-    subgraph "NDX Components"
-        APPROVER[Approver]
-        COSTS[Cost Tracker]
-        LIFECYCLE[Lifecycle Mgr]
-        DEPLOYER[Deployer]
-    end
+| Property | Value |
+|----------|-------|
+| **Service** | AWS Organizations |
+| **Purpose** | Account lifecycle management (OU moves) |
+| **Authentication** | IAM role in Hub account |
+| **Consumer** | Lifecycle Manager, Billing Separator |
 
-    UKPS -->|Domain list| APPROVER
-    CE -->|Cost data| COSTS
-    IDC -->|User auth| LIFECYCLE
-    IDC -->|Access grants| LIFECYCLE
-    BEDROCK -->|AI scoring| APPROVER
-    GITHUB -->|Templates| DEPLOYER
-    GITHUB -->|CDK detection| DEPLOYER
+### OU Move Operations
 
-    style UKPS fill:#f9f,stroke:#333
-    style CE fill:#bbf,stroke:#333
-    style IDC fill:#bbf,stroke:#333
-    style BEDROCK fill:#bbf,stroke:#333
-    style GITHUB fill:#f9f,stroke:#333
+The Billing Separator (`@aws-sdk/client-organizations` v3.1000.0) performs OU moves as part of the account lifecycle:
+
 ```
+Available OU -> Active OU       (on lease approval)
+Active OU -> CleanUp OU         (on lease termination)
+CleanUp OU -> Available OU      (after successful cleanup)
+CleanUp OU -> Quarantine OU     (after cleanup failure)
+```
+
+### Current OU Structure (from .state/org-ous.json)
+
+| OU Name | OU ID | Purpose |
+|---------|-------|---------|
+| InnovationSandbox | ou-2laj-lha5vsam | Parent for ISB resources |
+| ndx_InnovationSandboxAccountPool | ou-2laj-4dyae1oa | Pool account parent |
+| Infrastructure | ou-2laj-40z2mrlg | Network, Perimeter, SharedServices |
+| Security | ou-2laj-8q61vv13 | Audit, LogArchive |
+| Workloads | ou-2laj-4t1kuxou | InnovationSandboxHub |
+| Suspended | ou-2laj-vn184pt1 | Deactivated accounts |
+
+---
+
+## Integration 7: @co-cddo/isb-client (Shared API Client)
+
+### Overview
+
+| Property | Value |
+|----------|-------|
+| **Package** | `@co-cddo/isb-client` |
+| **Purpose** | Shared TypeScript client for ISB API |
+| **Distribution** | GitHub Releases (tarball) |
+| **Consumers** | Approver, Costs, Deployer |
+
+### Version Distribution
+
+| Consumer | Client Version | Distribution URL |
+|----------|---------------|-----------------|
+| Approver | v2.0.1 | `github.com/co-cddo/innovation-sandbox-on-aws-client/releases/download/v2.0.1/...` |
+| Costs | v2.0.0 | `github.com/co-cddo/innovation-sandbox-on-aws-client/releases/download/v2.0.0/...` |
+| Deployer | v2.0.0 | `github.com/co-cddo/innovation-sandbox-on-aws-client/releases/download/v2.0.0/...` |
+
+This client wraps the ISB API Gateway with typed methods for lease operations, account queries, and template lookups, using `@aws-sdk/client-secrets-manager` v3.992.0 for API key retrieval.
 
 ---
 
@@ -730,25 +390,21 @@ graph TB
 | Identity Center | IAM role | N/A (temporary) | Automatic |
 | Bedrock | IAM role | N/A (temporary) | Automatic |
 | GitHub API | Personal Access Token | Secrets Manager | Manual (annual) |
+| Organizations | IAM role | N/A (temporary) | Automatic |
 
 ### Network Security
 
-**VPC Endpoints** (optional, not currently deployed)
-```
-- com.amazonaws.eu-west-2.secretsmanager
-- com.amazonaws.eu-west-2.bedrock-runtime
-- com.amazonaws.eu-west-2.ce
-```
-
-**Benefits of VPC Endpoints:**
-- No internet gateway required
-- Traffic stays within AWS network
-- Enhanced security posture
-
 **Current Setup:**
-- Lambda functions use NAT Gateway for internet access
-- GitHub API calls traverse public internet
-- AWS service calls use AWS backbone (not internet)
+- Lambda functions use NAT Gateway for internet access (GitHub API calls)
+- AWS service calls (Bedrock, Cost Explorer, etc.) traverse the AWS backbone
+- No VPC endpoints currently deployed for AWS services
+
+**Recommended VPC Endpoints:**
+```
+- com.amazonaws.us-east-1.bedrock-runtime
+- com.amazonaws.us-east-1.ce
+- com.amazonaws.us-east-1.secretsmanager
+```
 
 ---
 
@@ -765,24 +421,6 @@ graph TB
 | GitHub | `GitHubAPIErrors` | > 10/hour |
 | Identity Center | `PermissionSetAssignmentFailures` | > 5/hour |
 
-### Health Checks
-
-**Synthetic Canary (CloudWatch Synthetics)**
-```javascript
-// Test Cost Explorer availability
-const ce = new CostExplorerClient({})
-const response = await ce.send(new GetCostAndUsageCommand({
-  TimePeriod: {
-    Start: '2024-01-01',
-    End: '2024-01-02'
-  },
-  Granularity: 'DAILY',
-  Metrics: ['UnblendedCost']
-}))
-
-assert(response.$metadata.httpStatusCode === 200)
-```
-
 ---
 
 ## References
@@ -790,11 +428,9 @@ assert(response.$metadata.httpStatusCode === 200)
 - [70-data-flows.md](./70-data-flows.md) - Data flow diagrams
 - [20-approver-system.md](./20-approver-system.md) - Approver architecture
 - [22-cost-tracking.md](./22-cost-tracking.md) - Cost Explorer usage
-- [AWS Cost Explorer API Documentation](https://docs.aws.amazon.com/cost-management/latest/userguide/ce-api.html)
-- [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
+- [23-deployer.md](./23-deployer.md) - Deployer architecture
+- [21-billing-separator.md](./21-billing-separator.md) - Billing separator details
+- [04-cross-account-trust.md](./04-cross-account-trust.md) - IAM trust relationships
 
 ---
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Complete - Synthesized from existing documentation
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

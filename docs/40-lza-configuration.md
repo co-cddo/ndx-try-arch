@@ -1,21 +1,32 @@
 # LZA Configuration
 
+> **Last Updated**: 2026-03-02
+> **Source**: [https://github.com/co-cddo/ndx-try-aws-lza](https://github.com/co-cddo/ndx-try-aws-lza)
+> **Captured SHA**: `6d70ae3`
+
 ## Executive Summary
 
-The Landing Zone Accelerator (LZA) configuration establishes the AWS organizational structure for NDX:Try AWS. It defines accounts, organizational units (OUs), service control policies (SCPs), and security baselines across all accounts in the organization.
+The Landing Zone Accelerator (LZA) configuration defines the entire AWS organizational structure for NDX:Try, establishing a multi-account hierarchy with Control Tower integration, service control policies, security baselines, centralized logging, and backup policies. Built on LZA Universal Configuration v1.1.0 (LZA v1.14.1), it manages 7 core accounts across 5 organizational units while deliberately delegating Innovation Sandbox account lifecycle management to the ISB platform via `ignore: true` directives on all sandbox-related OUs.
 
-**Key Capabilities:**
-- AWS Control Tower integration (v4.0)
-- 7 account structure (Management, Audit, LogArchive, SharedServices, Network, Perimeter, ISB Hub)
-- Innovation Sandbox OU hierarchy with 8 sub-OUs for account lifecycle management
-- Service Control Policies (SCPs) for security and cost guardrails
-- Centralized logging and security monitoring
+## Configuration Overview
 
-**Technology:** AWS Landing Zone Accelerator v1.14.1
+The repository consists of 7 primary YAML configuration files, 8 SCP JSON policies, 2 IAM policies, 2 SSM automation documents, and supporting policy files across 10 directories. All configuration values support variable substitution through `replacements-config.yaml`, enabling environment-specific deployments from a single template.
 
-**Configuration Version:** v1.1.0
+### Resolved Variable Replacements
 
-**Status:** Production
+The `replacements-config.yaml` file defines all parameterised values used across the configuration:
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `AcceleratorPrefix` | `AWSAccelerator` | Resource naming prefix |
+| `HomeRegion` | `us-west-2` | Primary region for LZA resources |
+| `EnabledRegions` | `us-west-2`, `us-east-1`, `eu-west-2` | Allowed AWS regions |
+| `BudgetsEmail` | `ndx-try-provider+gds-ndx-try-aws-budgets@dsit.gov.uk` | Budget alert recipient |
+| `SecurityHigh` | `ndx-try-provider+gds-ndx-try-aws-security-high@dsit.gov.uk` | High-severity security alerts |
+| `SecurityMedium` | `ndx-try-provider+gds-ndx-try-aws-security-medium@dsit.gov.uk` | Medium-severity security alerts |
+| `SecurityLow` | `ndx-try-provider+gds-ndx-try-aws-security-low@dsit.gov.uk` | Low-severity security alerts |
+| `GlobalCidr` | `10.0.0.0/8` | IPAM global pool |
+| `TransitGatewayASN` | `64512` | BGP ASN for Transit Gateway |
 
 ---
 
@@ -23,344 +34,374 @@ The Landing Zone Accelerator (LZA) configuration establishes the AWS organizatio
 
 ```mermaid
 graph TB
-    ROOT[Root OU]
+    ROOT["Root OU<br/>Management Account"]
 
-    ROOT --> SECURITY[Security OU]
-    ROOT --> INFRA[Infrastructure OU]
-    ROOT --> WORKLOADS[Workloads OU]
-    ROOT --> ISB[InnovationSandbox OU<br/>ignored: true]
-    ROOT --> SUSPENDED[Suspended OU<br/>ignored: true]
+    ROOT --> SECURITY["Security OU"]
+    ROOT --> INFRA["Infrastructure OU"]
+    ROOT --> WORKLOADS["Workloads OU"]
+    ROOT --> ISB["InnovationSandbox OU<br/><i>ignore: true</i>"]
+    ROOT --> SUSPENDED["Suspended OU<br/><i>ignore: true</i>"]
 
-    SECURITY --> AUDIT[Audit Account]
-    SECURITY --> LOGARCHIVE[LogArchive Account]
+    SECURITY --> AUDIT["Audit Account<br/>ndx-try-provider+...audit@dsit.gov.uk"]
+    SECURITY --> LOGARCHIVE["LogArchive Account<br/>ndx-try-provider+...log-archive@dsit.gov.uk"]
 
-    INFRA --> NETWORK[Network Account]
-    INFRA --> SHARED[SharedServices Account]
-    INFRA --> PERIMETER[Perimeter Account]
+    INFRA --> SHARED["SharedServices Account"]
+    INFRA --> NETWORK["Network Account"]
+    INFRA --> PERIMETER["Perimeter Account"]
 
-    WORKLOADS --> WL_SANDBOX[Workloads/Sandbox]
-    WORKLOADS --> WL_DEV[Workloads/Dev]
-    WORKLOADS --> WL_TEST[Workloads/Test]
-    WORKLOADS --> WL_PROD[Workloads/Prod]
+    WORKLOADS --> WL_SANDBOX["Workloads/Sandbox"]
+    WORKLOADS --> WL_DEV["Workloads/Dev"]
+    WORKLOADS --> WL_TEST["Workloads/Test"]
+    WORKLOADS --> WL_PROD["Workloads/Prod"]
 
-    WL_PROD --> ISB_HUB[InnovationSandboxHub Account<br/>ISB Core]
+    WL_PROD --> ISB_HUB["InnovationSandboxHub Account<br/>ISB Core Application"]
 
-    ISB --> POOL[ndx_InnovationSandboxAccountPool<br/>ignored: true]
-    POOL --> ACTIVE[Active OU<br/>Accounts with active leases]
-    POOL --> AVAILABLE[Available OU<br/>Clean, ready accounts]
-    POOL --> CLEANUP[CleanUp OU<br/>Accounts being cleaned]
-    POOL --> ENTRY[Entry OU<br/>New accounts]
-    POOL --> EXIT[Exit OU<br/>Accounts leaving pool]
-    POOL --> FROZEN[Frozen OU<br/>Suspended accounts]
-    POOL --> QUARANTINE[Quarantine OU<br/>Failed cleanup]
+    ISB --> POOL["ndx_InnovationSandboxAccountPool<br/><i>ignore: true</i>"]
+    POOL --> ACTIVE["Active"]
+    POOL --> AVAILABLE["Available"]
+    POOL --> CLEANUP["CleanUp"]
+    POOL --> ENTRY["Entry"]
+    POOL --> EXIT["Exit"]
+    POOL --> FROZEN["Frozen"]
+    POOL --> QUARANTINE["Quarantine"]
+
+    style ISB fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style POOL fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style ACTIVE fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style AVAILABLE fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style CLEANUP fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style ENTRY fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style EXIT fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style FROZEN fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style QUARANTINE fill:#f9f,stroke:#333,stroke-dasharray: 5 5
 ```
+
+All InnovationSandbox OUs are marked `ignore: true` because the ISB platform dynamically moves accounts between these OUs during the lease lifecycle. LZA creates the OU structure but does not manage accounts within it.
 
 ---
 
-## Configuration Files
+## Account Definitions
 
-### 1. Global Config (`global-config.yaml`)
+### Mandatory Accounts (`accounts-config.yaml`)
 
-**Key Settings:**
+| Account | Email | OU | Purpose |
+|---------|-------|-----|---------|
+| Management | `ndx-try-provider+gds-ndx-try-aws@dsit.gov.uk` | Root | AWS Organizations management |
+| LogArchive | `ndx-try-provider+gds-ndx-try-aws-log-archive@dsit.gov.uk` | Security | Centralized log aggregation |
+| Audit | `ndx-try-provider+gds-ndx-try-aws-audit@dsit.gov.uk` | Security | Security auditing and compliance |
+
+### Workload Accounts
+
+| Account | Email | OU | Purpose |
+|---------|-------|-----|---------|
+| SharedServices | `ndx-try-provider+gds-ndx-try-aws-shared-services@dsit.gov.uk` | Infrastructure | Shared infrastructure, Identity Center delegation |
+| Network | `ndx-try-provider+gds-ndx-try-aws-network@dsit.gov.uk` | Infrastructure | Network hub |
+| Perimeter | `ndx-try-provider+gds-ndx-try-aws-perimeter@dsit.gov.uk` | Infrastructure | Perimeter security |
+| InnovationSandboxHub | `ndx-try-provider+gds-ndx-try-aws-isb-hub@dsit.gov.uk` | Workloads/Prod | ISB Core application host |
+
+---
+
+## Global Configuration (`global-config.yaml`)
+
+### Core Settings
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `homeRegion` | `eu-west-2` | Primary region for LZA resources |
-| `enabledRegions` | `[eu-west-2, eu-west-1]` | Allowed AWS regions |
-| `managementAccountAccessRole` | `AWSControlTowerExecution` | Cross-account orchestration role |
-| `cloudwatchLogRetentionInDays` | 365 | Compliance requirement |
-| `terminationProtection` | true | Prevent accidental deletion |
+| `homeRegion` | `us-west-2` (via replacement) | Primary region for all LZA resources |
+| `enabledRegions` | `us-west-2`, `us-east-1`, `eu-west-2` | Operational regions |
+| `managementAccountAccessRole` | `AWSControlTowerExecution` | Cross-account orchestration |
+| `cloudwatchLogRetentionInDays` | 365 | Compliance log retention |
+| `terminationProtection` | `true` | Prevent accidental stack deletion |
+| `useV2Stacks` | `true` | LZA v2 networking stacks |
+| `centralizeBuckets` | `true` | Centralised CDK asset buckets |
 
-**Control Tower Configuration:**
+### Control Tower Integration
+
+Control Tower v4.0 is enabled with organization-wide CloudTrail, IAM Identity Center access, and 365-day log retention for both general and access logging buckets. LZA defers CloudTrail management to Control Tower to avoid duplication (`cloudtrail.enable: false`).
+
+### Control Tower Controls
+
+11 detective and preventive controls are deployed to Security, Infrastructure, and all Workloads sub-OUs:
+
+| Control | Identifier | Purpose |
+|---------|------------|---------|
+| CONFIG.CLOUDTRAIL.DT.5 | `1m3wi9y66gi199vwyqmu4lm4l` | S3 data events logging |
+| CONFIG.LOGS.DT.1 | `497wrm2xnk1wxlf4obrdo7mej` | CloudWatch log encryption |
+| CONFIG.IAM.DT.6 | `3jw8po9x95lr2nob65iaqhqir` | IAM groups have users |
+| CONFIG.IAM.DT.5 | `bi738zni6ovf9d6dagobqtk6g` | No inline policies |
+| CONFIG.EC2.DT.17 | `1d908j9c0qtyr5vq7mora1ht2` | Internet gateway authorization |
+| AWS-GR_NO_UNRESTRICTED_ROUTE_TO_IGW | `b8pjfqosgkgknznstduvel4rh` | No unrestricted IGW routes |
+| CONFIG.SAGEMAKER.DT.3 | `3b7ib9mi87kcw90atgx2nboax` | SageMaker KMS encryption |
+| CONFIG.SECURITYHUB.DT.1 | `1klk5z4sby5l0cfx65dmq2dsk` | Security Hub enabled |
+| BACKUP_PLAN_MIN_FREQUENCY | `dagreqi0i3fitenunuuo4q64t` | Backup frequency check |
+| BACKUP_RECOVERY_POINT_MANUAL_DELETE | `d1wltz1jx8c4aok5062g4kzz3` | Recovery point delete protection |
+| CONFIG.EC2.DT.10 | `aqh482zxh1libhd8e5pff5r1w` | EC2 backup plan coverage |
+
+### Central Root User Management
+
+Root credentials management and root sessions are centrally managed:
 ```yaml
-controlTower:
+centralRootUserManagement:
   enable: true
-  landingZone:
-    version: "4.0"
-    logging:
-      loggingBucketRetentionDays: 365
-      accessLoggingBucketRetentionDays: 365
-      organizationTrail: true
-    security:
-      enableIdentityCenterAccess: true
+  capabilities:
+    rootCredentialsManagement: true
+    allowRootSessions: true
 ```
 
-**Control Tower Controls (Sample):**
-- `CONFIG.CLOUDTRAIL.DT.5` - S3 data events logging
-- `CONFIG.LOGS.DT.1` - CloudWatch log encryption
-- `CONFIG.IAM.DT.6` - IAM group membership check
-- `CONFIG.EC2.DT.17` - Internet gateway authorization
-- `CONFIG.SECURITYHUB.DT.1` - Security Hub enabled
+### Budget Configuration
 
----
+A $2,000/month organizational budget is configured on the Management account with notification thresholds at 50%, 75%, 80%, 90%, and 100% of actual spend, sending alerts to the budgets email address.
 
-### 2. Organization Config (`organization-config.yaml`)
+### Logging Architecture
 
-**Organizational Units:**
+Logs are centralized in the LogArchive account with the following lifecycle:
 
-```yaml
-organizationalUnits:
-  - name: Security
-  - name: Infrastructure
-  - name: Suspended
-    ignore: true
-  - name: Workloads
-  - name: Workloads/Sandbox
-  - name: Workloads/Dev
-  - name: Workloads/Test
-  - name: Workloads/Prod
-  - name: InnovationSandbox
-    ignore: true  # Managed by ISB
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool
-    ignore: true
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool/Active
-    ignore: true
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool/Available
-    ignore: true
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool/CleanUp
-    ignore: true
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool/Entry
-    ignore: true
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool/Exit
-    ignore: true
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool/Frozen
-    ignore: true
-  - name: InnovationSandbox/ndx_InnovationSandboxAccountPool/Quarantine
-    ignore: true
-```
+| Bucket Type | Retention | Glacier IR Transition | Purpose |
+|-------------|-----------|----------------------|---------|
+| Access Log | 1000 days | After 365 days | S3 access logs |
+| Central Log | 1000 days | After 365 days | Aggregated logs |
+| ELB Log | 1000 days | After 365 days | Load balancer access logs |
 
-**Quarantine New Accounts:**
-```yaml
-quarantineNewAccounts:
-  enable: true
-  scpPolicyName: "{{ AcceleratorPrefix }}-Quarantine-New-Object"
-```
+Session Manager logs are sent to CloudWatch Logs with the `EC2-Default-SSM-Role` attached for SSM connectivity. CloudWatch Logs use dynamic partitioning configured via `dynamic-partitioning/log-filters.json`.
 
----
+### Cost and Usage Reports
 
-### 3. Accounts Config (`accounts-config.yaml`)
-
-**Mandatory Accounts:**
-
-| Account | Email | OU | Purpose |
-|---------|-------|-----|---------|
-| Management | ndx-try-provider+gds-ndx-try-aws@dsit.gov.uk | Root | AWS Organizations management |
-| LogArchive | ndx-try-provider+gds-ndx-try-aws-log-archive@dsit.gov.uk | Security | Centralized logging |
-| Audit | ndx-try-provider+gds-ndx-try-aws-audit@dsit.gov.uk | Security | Security auditing and compliance |
-
-**Workload Accounts:**
-
-| Account | Email | OU | Purpose |
-|---------|-------|-----|---------|
-| SharedServices | ndx-try-provider+gds-ndx-try-aws-shared-services@dsit.gov.uk | Infrastructure | Shared infrastructure services |
-| Network | ndx-try-provider+gds-ndx-try-aws-network@dsit.gov.uk | Infrastructure | Network hub (Transit Gateway, VPCs) |
-| Perimeter | ndx-try-provider+gds-ndx-try-aws-perimeter@dsit.gov.uk | Infrastructure | Perimeter security (WAF, Shield) |
-| InnovationSandboxHub | ndx-try-provider+gds-ndx-try-aws-isb-hub@dsit.gov.uk | Workloads/Prod | ISB Core application |
-
----
-
-### 4. Network Config (`network-config.yaml`)
-
-**VPC Architecture:**
-```yaml
-vpcs:
-  - name: Shared-Services-VPC
-    region: eu-west-2
-    cidr: 10.0.0.0/16
-    subnets:
-      - name: Public-A
-        availabilityZone: a
-        cidr: 10.0.1.0/24
-        type: public
-      - name: Private-A
-        availabilityZone: a
-        cidr: 10.0.10.0/24
-        type: private
-    natGateways:
-      - subnet: Public-A
-```
-
-**Transit Gateway:** (Optional - not currently configured)
-
----
-
-### 5. Security Config (`security-config.yaml`)
-
-**AWS Config Rules:**
-- All Config rules enabled for compliance monitoring
-- Organization-wide trail via Control Tower
-- Security Hub enabled in all accounts
-- GuardDuty enabled with central aggregation
-
-**CloudWatch Log Groups:**
-- Encryption required (KMS)
-- 365-day retention
-- Cross-account log aggregation
-
----
-
-### 6. IAM Config (`iam-config.yaml`)
-
-**Centralized IAM Policies:**
-```yaml
-policies:
-  - name: deny-root-user
-    description: Deny all actions by root user
-    policy: iam-policies/deny-root-user.json
-```
-
-**Role Sets:**
-- Admin role (break-glass access)
-- ReadOnly role (auditing)
-- Developer role (limited permissions)
+Monthly CUR reports are generated in Parquet format with refresh of closed reports enabled, stored under the `cur` S3 prefix with a 365-day lifecycle.
 
 ---
 
 ## Service Control Policies
 
-### SCP Hierarchy
+### SCP Architecture
 
 ```mermaid
 graph TB
-    ROOT[Root OU<br/>AWS Default SCPs]
+    subgraph "Organization-Wide SCPs"
+        CORE1["Core-Guardrails-1<br/>Config rules, Lambda, SNS,<br/>CloudWatch Logs, Kinesis,<br/>EventBridge protection"]
+        CORE2["Core-Guardrails-2<br/>IAM roles, CloudFormation,<br/>SSM, S3, Root user deny,<br/>Security services protection"]
+    end
 
-    ROOT --> CORE1[LZA-Core-Guardrails-1<br/>CloudTrail, Config, LZA protection]
-    ROOT --> CORE2[LZA-Core-Guardrails-2<br/>Security services, root user]
+    subgraph "OU-Specific SCPs"
+        SEC_G["Security-Guardrails-1<br/><i>Audit + LogArchive accounts</i><br/>VPC/IGW deny, encryption"]
+        INFRA_G["Infrastructure-Guardrails-1<br/><i>Network, Perimeter, SharedServices</i><br/>Networking, firewalls, encryption,<br/>Route53 protection"]
+        WL_G["Workloads-Guardrails-1<br/><i>Dev, Test, Prod OUs</i><br/>Tag protection, networking,<br/>encryption, Route53"]
+        SB_G["Sandbox-Guardrails-1<br/><i>Workloads/Sandbox OU</i><br/>Tag + networking protection"]
+    end
 
-    CORE1 --> INFRA[Infrastructure OU]
-    CORE1 --> SECURITY[Security OU]
-    CORE1 --> WORKLOADS[Workloads OU]
+    subgraph "Special-Purpose SCPs"
+        SUSP["Suspended-Guardrails<br/>Deny LZA roles from<br/>accessing resources"]
+        QUAR["Quarantine-New-Object<br/>Deny all except LZA roles<br/>for new accounts"]
+    end
 
-    CORE2 --> INFRA
-    CORE2 --> SECURITY
-    CORE2 --> WORKLOADS
+    CORE1 --> |"Infrastructure, Security,<br/>Workloads OUs"| INFRA_G
+    CORE2 --> |"Infrastructure, Security,<br/>Workloads OUs"| SEC_G
 
-    INFRA --> INFRA_G1[LZA-Infrastructure-Guardrails-1<br/>Network, encryption]
-    SECURITY --> SEC_G1[LZA-Security-Guardrails-1<br/>Network, encryption]
-    WORKLOADS --> WL_G1[LZA-Workloads-Guardrails-1<br/>Service limits]
+    style SUSP fill:#fdd
+    style QUAR fill:#fdd
 ```
 
-### SCP Analysis
+### SCP Details
 
-**File:** `service-control-policies/lza-core-guardrails-1.json`
+**Core-Guardrails-1** (Infrastructure, Security, Workloads OUs): Protects LZA-managed AWS Config rules, Lambda functions, SNS topics, CloudWatch Log groups, Kinesis/Firehose streams, and EventBridge rules from modification by non-LZA roles.
 
-**Protections:**
-- Deny CloudTrail deletion/modification
-- Deny AWS Config deletion/modification
-- Deny LZA-managed resource modification
-- Protect CloudWatch Logs
+**Core-Guardrails-2** (Infrastructure, Security, Workloads OUs): Protects LZA IAM roles from modification, prevents CloudFormation stack deletion, protects SSM parameters and S3 buckets, denies root user access, and blocks modifications to GuardDuty, Security Hub, Macie, IAM Access Analyzer, EBS encryption defaults, VPC defaults, RAM sharing, and public S3 access blocks.
 
-**File:** `service-control-policies/lza-core-guardrails-2.json`
+**Security-Guardrails-1** (Audit, LogArchive accounts): Denies creation of internet gateways and VPCs, and enforces encryption for EFS and RDS.
 
-**Protections:**
-- Deny GuardDuty, Security Hub, Macie modifications
-- Deny root account usage
-- Protect organization SCPs
+**Infrastructure-Guardrails-1** (Network, Perimeter, SharedServices accounts): Comprehensive networking protection denying unauthorized VPC, subnet, Transit Gateway, NAT gateway, route, and IPAM modifications. Protects Network Firewall resources. Enforces EFS and RDS encryption. Protects Route53 VPC associations and endpoint DNS records.
 
-**Comparison with ndx-try-aws-scp:** See [41-terraform-scp.md](41-terraform-scp.md)
+**Workloads-Guardrails-1** (Dev, Test, Prod OUs): Protects Accelerator-tagged EC2 resources, denies networking modifications for Accelerator-tagged resources, enforces EFS and RDS encryption.
+
+**Sandbox-Guardrails-1** (Workloads/Sandbox OU): Protects Accelerator-tagged EC2 resources and denies networking modifications for tagged resources. Enforces EFS and RDS encryption.
+
+**Suspended-Guardrails**: Denies all actions for LZA provisioning roles (`AWSControlTowerExecution`, `AWSAccelerator*`, `cdk-accel*`), effectively blocking LZA from managing suspended accounts.
+
+**Quarantine-New-Object**: Denies all actions for non-LZA roles, preventing any user activity in newly created accounts until LZA provisioning completes.
+
+### Exempt Role Patterns
+
+All SCPs exempt the following role ARN patterns from restrictions:
+- `arn:aws:iam::*:role/AWSAccelerator*`
+- `arn:aws:iam::*:role/AWSControlTowerExecution`
+- `arn:aws:iam::*:role/cdk-accel*`
 
 ---
 
-## Deployment Process
+## Resource Control Policies
 
-### Initial Deployment
+A Resource Control Policy (`Core-Rcp-Guardrails`) is deployed to Infrastructure, Security, and Workloads OUs implementing a data perimeter:
 
-```bash
-# 1. Bootstrap Control Tower in Management account
-# (Manual via AWS Console)
+- **S3 data perimeter**: Denies external write operations to S3 from principals outside the organization
+- **Confused deputy protection**: Denies AWS service-to-service calls when the source organization does not match
+- **Secure transport enforcement**: Denies unencrypted (non-TLS) access to S3, SQS, KMS, Secrets Manager, and STS
+- **KMS key protection**: Prevents modification of Accelerator-tagged KMS keys by non-LZA roles
+- **Control Tower log protection**: Protects the Control Tower log bucket from unauthorized access
 
-# 2. Clone LZA repository
-git clone https://github.com/co-cddo/ndx-try-aws-lza.git
+---
 
-# 3. Customize configuration
-# Edit *.yaml files with organization-specific values
+## Declarative Policies
 
-# 4. Deploy LZA installer stack
-aws cloudformation create-stack \
-  --stack-name AWSAccelerator-Installer \
-  --template-url https://aws-accelerator-installer.s3.amazonaws.com/latest/installer.yaml \
-  --parameters \
-    ParameterKey=RepositoryName,ParameterValue=ndx-try-aws-lza \
-    ParameterKey=BranchName,ParameterValue=main \
-  --capabilities CAPABILITY_NAMED_IAM
+A VPC Block Public Access declarative policy (`lza-core-vpc-block-public-access.json`) is deployed to Security, Workloads/Dev, Workloads/Test, Workloads/Prod OUs and the Network and SharedServices accounts. It enforces `block_bidirectional` mode on internet gateway access with exclusions allowed for legitimate use cases.
 
-# 5. LZA pipeline executes automatically
-# - Creates CodePipeline
-# - Runs CDK deployment
-# - Provisions accounts and OUs
-# - Applies SCPs and guardrails
+---
 
-# 6. Verify deployment
-aws organizations list-organizational-units-for-parent --parent-id r-xxxx
-```
+## Security Configuration (`security-config.yaml`)
 
-### Update Procedure
+### Central Security Services
 
-```bash
-# 1. Make changes to YAML files
-git add .
-git commit -m "Update LZA configuration"
-git push origin main
+| Service | Configuration | Delegated Admin |
+|---------|--------------|-----------------|
+| Macie | Enabled, 15-min policy finding frequency, publish policy findings | Audit |
+| GuardDuty | Enabled with S3 and EKS protection, S3 export every 6 hours | Audit |
+| Security Hub | Enabled with region aggregation | Audit |
+| IAM Access Analyzer | Enabled | Audit |
+| EBS Default Encryption | Enabled | - |
+| S3 Public Access Block | Enabled | - |
+| SCP Revert Changes | Enabled | - |
 
-# 2. LZA pipeline auto-triggers on push
-# 3. Review changes in CodePipeline
-# 4. Manual approval gate (if configured)
-# 5. Deployment completes
-```
+### Security Hub Standards
+
+| Standard | Enabled | Deployment |
+|----------|---------|------------|
+| AWS Foundational Security Best Practices v1.0.0 | Yes | Root OU |
+| NIST SP 800-53 Rev. 5 | Yes | Root OU |
+| CIS AWS Foundations Benchmark v3.0.0 | Yes | Root OU |
+| CIS AWS Foundations Benchmark v1.2.0 | No | - |
+
+### AWS Config Rules
+
+26 Config rules are deployed organization-wide with 2 automated remediations:
+
+**Automated Remediations:**
+1. **EC2 Instance Profile Attachment**: Automatically attaches the `EC2-Default-SSM-Role` instance profile to EC2 instances that lack one, using the `Attach-IAM-Instance-Profile` SSM document
+2. **ELB Logging Enablement**: Automatically enables access logging on Elastic Load Balancers using the `SSM-ELB-Enable-Logging` SSM document
+
+### IAM Password Policy
+
+Minimum 14 characters, uppercase, lowercase, symbols, numbers required. 90-day maximum age, 24-password reuse prevention.
+
+---
+
+## IAM Configuration (`iam-config.yaml`)
+
+### Identity Center
+
+IAM Identity Center is enabled with `SharedServices` as the delegated admin account.
+
+### Policy Sets
+
+Two IAM policies are deployed to all accounts (excluding Management):
+- **End-User-Policy**: Sample end-user permission boundary (`iam-policies/sample-end-user-policy.json`)
+- **Default-SSM-S3-Policy**: SSM agent S3 access for instance management (`iam-policies/ssm-s3-policy.json`)
+
+### Role Sets
+
+Two roles are deployed to all accounts (excluding Management):
+- **Backup-Role**: Assumed by `backup.amazonaws.com` with AWS managed backup/restore policies
+- **EC2-Default-SSM-Role**: Instance profile for EC2 with SSM, CloudWatch Agent, and the SSM S3 policy. Bounded by the End-User-Policy
+
+---
+
+## Network Configuration (`network-config.yaml`)
+
+The network configuration is currently minimal:
+- Default VPCs are **not deleted** (`delete: false`)
+- No Transit Gateways configured
+- No VPCs defined
+- No endpoint policies applied
+
+### IPAM Address Plan (from replacements)
+
+A comprehensive RFC 1918 IPAM plan is defined in the replacements configuration using the `10.0.0.0/8` global pool:
+
+| Pool | CIDR | Available IPs |
+|------|------|---------------|
+| Global | `10.0.0.0/8` | 16,777,216 |
+| Regional (Home) | `10.0.0.0/12` | 1,048,576 |
+| Ingress VPC | `10.0.0.0/20` | 4,096 |
+| Egress VPC | `10.0.16.0/24` | 256 |
+| Inspection VPC | `10.0.17.0/24` | 256 |
+| Endpoints VPC | `10.0.20.0/22` | 1,024 |
+| SharedServices VPC | `10.0.24.0/21` | 2,048 |
+| Sandbox VPCs | `10.2.0.0/15` | 131,072 |
+| Dev Workloads | `10.4.0.0/14` | 262,144 |
+| Test Workloads | `10.8.0.0/14` | 262,144 |
+| Prod Workloads | `10.12.0.0/14` | 262,144 |
+
+These IPAM allocations are defined but not yet deployed via network-config.yaml VPC definitions.
+
+---
+
+## Backup and Tagging Policies
+
+### Backup Policy
+
+A primary backup plan (`primary-backup-plan.json`) is deployed to Infrastructure and Workloads OUs via the `AWSAccelerator-BackupVault`. Backup vaults are created in Infrastructure, Dev, Test, and Prod OUs. The plan supports continuous, hourly, daily, weekly, and monthly schedules with VSS enabled for Windows, 1-year standard retention, 35-day continuous retention, and 2-year monthly retention.
+
+### Tagging Policies
+
+Two tagging policies enforce backup tag compliance:
+- **OrgTagPolicy**: Enforces backup plan tag values across Infrastructure and Workloads OUs
+- **S3TagPolicy**: S3-specific tagging for continuous backup support (S3 + RDS only)
+
+---
+
+## Repository Directory Structure
+
+| Path | Contents | Purpose |
+|------|----------|---------|
+| `global-config.yaml` | Core LZA settings | Control Tower, logging, budgets, backup |
+| `organization-config.yaml` | OU structure, SCPs, policies | Organization hierarchy and guardrails |
+| `accounts-config.yaml` | Account definitions | 3 mandatory + 4 workload accounts |
+| `iam-config.yaml` | Identity Center, policies, roles | IAM configuration |
+| `network-config.yaml` | VPC/TGW configuration | Currently minimal |
+| `security-config.yaml` | Security services, Config rules | Comprehensive security baseline |
+| `replacements-config.yaml` | Variable substitutions | Environment-specific values |
+| `service-control-policies/` | 8 SCP JSON files | Guardrail policies |
+| `iam-policies/` | 2 IAM policy JSON files | End-user and SSM policies |
+| `ssm-documents/` | 2 SSM automation YAML files | Remediation automations |
+| `rcp-policies/` | 1 RCP JSON file | Resource control policies |
+| `declarative-policies/` | 1 declarative policy JSON | VPC public access blocking |
+| `backup-policies/` | 1 backup plan JSON | Organization backup policy |
+| `tagging-policies/` | 2 tagging policy JSON files | Tag compliance enforcement |
+| `event-bus-policies/` | 1 EventBridge policy JSON | Default event bus policy |
+| `dynamic-partitioning/` | 1 log filter JSON file | CloudWatch log partitioning |
+| `ssm-remediation-roles/` | 2 remediation role JSON files | Config rule remediation |
+| `vpc-endpoint-policies/` | 1 default policy JSON | VPC endpoint access control |
 
 ---
 
 ## Integration with Innovation Sandbox
 
-### OU Lifecycle Management
+The LZA configuration establishes the InnovationSandbox OU hierarchy but marks all 8 sub-OUs with `ignore: true`. This is a deliberate design choice:
 
-**Innovation Sandbox OUs (ignored by LZA):**
+1. LZA creates the OU structure during initial deployment
+2. LZA does not manage or monitor accounts within ignored OUs
+3. The ISB platform uses AWS Organizations API to move accounts between Active, Available, CleanUp, Entry, Exit, Frozen, and Quarantine OUs during the lease lifecycle
+4. The InnovationSandboxHub account in Workloads/Prod is **not** ignored and receives full LZA governance
 
-```yaml
-- name: InnovationSandbox
-  ignore: true  # ISB manages this hierarchy
-```
+The `quarantineNewAccounts` feature is enabled with the `AWSAccelerator-Quarantine-New-Object` SCP, which is applied to newly created accounts until LZA provisioning completes.
 
-**Why ignored?**
-- ISB Core dynamically moves accounts between OUs
-- LZA would conflict with ISB's account management
-- ISB uses AWS Organizations API directly
-
-**Coordination:**
-- LZA creates the InnovationSandbox parent OU
-- LZA creates sub-OUs (Active, Available, CleanUp, etc.)
-- LZA does not manage accounts within these OUs
-- ISB takes over after initial OU creation
+SCP revert changes (`scpRevertChangesConfig.enable: true`) is enabled in security-config.yaml. This can conflict with Terraform-managed SCPs from the [ndx-try-aws-scp](41-terraform-scp.md) repository -- the PROPOSAL.md in that repo documents the need to disable this for Terraform-managed SCPs to persist.
 
 ---
 
-## Monitoring & Observability
+## Version History
 
-### CloudWatch Metrics
-
-**LZA Pipeline:**
-- CodePipeline execution status
-- CDK deployment success/failure
-- Stack drift detection
-
-**Control Tower:**
-- Guardrail compliance status
-- Account provisioning events
-- OU changes
-
-### Alarms
-
-- LZA pipeline failures
-- Stack drift detected
-- SCP enforcement violations
+| Date | Change | Version |
+|------|--------|---------|
+| 2025-11-17 | Added InnovationSandbox OUs to organization-config.yaml | v1.0.0 |
+| 2025-12-15 | Restructured directory for GitHub configuration source | v1.0.0 |
+| 2025-12-19 | Upgraded from LZA Universal Config v1.0.0 to v1.1.0 | v1.1.0 |
 
 ---
 
 ## Related Documentation
 
+- [02-aws-organization.md](02-aws-organization.md) - Organization structure overview
 - [05-service-control-policies.md](05-service-control-policies.md) - Detailed SCP analysis
-- [41-terraform-scp.md](41-terraform-scp.md) - Terraform SCP comparison
-- [02-aws-organization.md](02-aws-organization.md) - Organization structure
+- [41-terraform-scp.md](41-terraform-scp.md) - Terraform-managed Innovation Sandbox SCPs
+- [42-terraform-resources.md](42-terraform-resources.md) - Organization-level Terraform resources
 
 ---
 
@@ -368,16 +409,19 @@ git push origin main
 
 | File Path | Purpose |
 |-----------|---------|
-| `/repos/ndx-try-aws-lza/global-config.yaml` | Global LZA settings |
-| `/repos/ndx-try-aws-lza/organization-config.yaml` | OU structure and SCPs |
-| `/repos/ndx-try-aws-lza/accounts-config.yaml` | Account definitions |
-| `/repos/ndx-try-aws-lza/network-config.yaml` | VPC and networking |
-| `/repos/ndx-try-aws-lza/security-config.yaml` | Security baselines |
-| `/repos/ndx-try-aws-lza/iam-config.yaml` | IAM policies and roles |
-| `/repos/ndx-try-aws-lza/service-control-policies/` | SCP JSON files |
+| `repos/ndx-try-aws-lza/global-config.yaml` | Global LZA settings |
+| `repos/ndx-try-aws-lza/organization-config.yaml` | OU structure, SCPs, tagging, backup policies |
+| `repos/ndx-try-aws-lza/accounts-config.yaml` | Account definitions |
+| `repos/ndx-try-aws-lza/network-config.yaml` | VPC and networking (minimal) |
+| `repos/ndx-try-aws-lza/security-config.yaml` | Security baselines and Config rules |
+| `repos/ndx-try-aws-lza/iam-config.yaml` | IAM policies and roles |
+| `repos/ndx-try-aws-lza/replacements-config.yaml` | Variable replacements |
+| `repos/ndx-try-aws-lza/service-control-policies/*.json` | 8 SCP policy files |
+| `repos/ndx-try-aws-lza/iam-policies/*.json` | 2 IAM policy files |
+| `repos/ndx-try-aws-lza/ssm-documents/*.yaml` | 2 SSM automation documents |
+| `repos/ndx-try-aws-lza/rcp-policies/lza-core-rcp-guardrails-1.json` | Resource control policy |
+| `repos/ndx-try-aws-lza/declarative-policies/lza-core-vpc-block-public-access.json` | VPC public access policy |
+| `repos/ndx-try-aws-lza/README.md` | Repository documentation and changelog |
 
 ---
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Production
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

@@ -1,197 +1,497 @@
-# ISB Frontend Architecture
+# ISB Frontend
+
+> **Last Updated**: 2026-03-02
+> **Source**: [co-cddo/innovation-sandbox-on-aws](https://github.com/co-cddo/innovation-sandbox-on-aws)
+> **Captured SHA**: `cf75b87`
 
 ## Executive Summary
 
-The Innovation Sandbox (ISB) Frontend is a modern React 18 single-page application (SPA) built with TypeScript, Vite, and AWS Cloudscape Design System. It provides the administrative interface for managing sandbox account leases, templates, approvals, and pool capacity across the NDX AWS organization.
-
-**Key Capabilities:**
-- Lease request and management interface
-- Template administration and configuration
-- Approval workflow for managers
-- Account pool monitoring and health metrics
-- Real-time status updates via API polling
-- Role-based access control (Admin, Manager, User)
-
-**Technology Stack:**
-- React 18.3 with TypeScript 5.5
-- Vite 7.2 (build tool and dev server)
-- AWS Cloudscape Design System 3.0
-- TanStack Query (React Query) 5.74 for API state management
-- React Router 6.30 for navigation
-
-**Hosting:** S3 static hosting + CloudFront CDN
-
-**Status:** Production (Phase 3 Core Component)
-
----
+The Innovation Sandbox frontend is a React 18 single-page application built with TypeScript, Vite 7.2, and the AWS Cloudscape Design System. It provides a role-based interface for end users to request sandbox accounts, for managers to approve requests, and for admins to manage the account pool and configuration. The frontend is built at CDK synth time, deployed to S3, and served through a CloudFront distribution that also proxies API requests to the API Gateway backend. Authentication uses SAML 2.0 SSO via IAM Identity Center, with JWT tokens for subsequent API calls.
 
 ## Architecture Overview
 
-### Application Structure
-
 ```mermaid
 graph TB
-    subgraph "Client Browser"
-        BROWSER[Web Browser]
+    subgraph "User Browser"
+        SPA[React SPA]
+        RQ[TanStack Query<br/>Cache]
+        RR[React Router<br/>Client-side routing]
     end
 
-    subgraph "AWS CloudFront CDN"
-        CF[CloudFront Distribution]
-        WAF[AWS WAF]
+    subgraph "CloudFront Distribution"
+        CF_DEFAULT["Default Behavior<br/>S3 Origin (static assets)"]
+        CF_API["/api/* Behavior<br/>API Gateway Origin"]
+        CF_FN_REDIRECT[CF Function:<br/>Path Redirect to index.html]
+        CF_FN_REWRITE[CF Function:<br/>Strip /api prefix]
+        RESP_HEADERS[Response Headers Policy<br/>CSP, HSTS, X-Frame-Options]
     end
 
-    subgraph "S3 Static Hosting"
-        S3[S3 Bucket<br/>Innovation-Sandbox-UI]
-        INDEX[index.html]
-        JS[app.bundle.js]
-        CSS[styles.css]
+    subgraph "S3 Hosting"
+        S3[S3 Bucket<br/>KMS encrypted, versioned]
+        OAC[Origin Access Control]
     end
 
-    subgraph "React Application"
-        ROUTER[React Router]
-        AUTH[Authenticator]
-        LAYOUT[App Layout]
-
-        subgraph "Feature Domains"
-            HOME[Home/Dashboard]
-            LEASES[Leases]
-            TEMPLATES[Lease Templates]
-            APPROVALS[Approvals]
-            ACCOUNTS[Accounts]
-            SETTINGS[Settings]
-        end
+    subgraph "API Layer"
+        WAF[AWS WAF v2]
+        APIGW[API Gateway REST API]
+        AUTH_LAMBDA[Authorizer Lambda]
     end
 
     subgraph "Backend Services"
-        APIGW[API Gateway]
-        COGNITO[Cognito User Pool]
-        LAMBDA[Lambda Functions]
-        DDB[DynamoDB]
+        LEASES_API[/leases]
+        TEMPLATES_API[/leaseTemplates]
+        ACCOUNTS_API[/accounts]
+        CONFIG_API[/configurations]
+        SSO_API[/auth/*]
     end
 
-    BROWSER -->|HTTPS| WAF
-    WAF --> CF
-    CF -->|Cache Miss| S3
-    S3 --> INDEX
-    S3 --> JS
-    S3 --> CSS
+    SPA -->|HTTPS GET /| CF_DEFAULT
+    CF_DEFAULT --> CF_FN_REDIRECT
+    CF_FN_REDIRECT --> OAC
+    OAC --> S3
+    CF_DEFAULT --> RESP_HEADERS
 
-    BROWSER -->|App Loads| ROUTER
-    ROUTER --> AUTH
-    AUTH -->|JWT Token| COGNITO
-    AUTH --> LAYOUT
-    LAYOUT --> HOME
-    LAYOUT --> LEASES
-    LAYOUT --> TEMPLATES
-    LAYOUT --> APPROVALS
-    LAYOUT --> ACCOUNTS
-    LAYOUT --> SETTINGS
-
-    LEASES -->|API Calls| APIGW
-    TEMPLATES -->|API Calls| APIGW
-    APPROVALS -->|API Calls| APIGW
-    ACCOUNTS -->|API Calls| APIGW
-    APIGW --> LAMBDA
-    LAMBDA --> DDB
-```
-
-### Folder Structure
-
-```
-source/frontend/
-├── public/                           # Static assets
-│   ├── markdown/                     # Help documentation (MD files)
-│   │   ├── home.md
-│   │   ├── leases.md
-│   │   ├── request.md
-│   │   ├── approvals.md
-│   │   ├── accounts.md
-│   │   ├── lease-templates.md
-│   │   └── settings.md
-│   ├── favicon.ico
-│   ├── logo192.png
-│   ├── logo512.png
-│   └── manifest.json
-├── src/
-│   ├── assets/                       # Global styles and images
-│   │   ├── images/logo.png
-│   │   └── styles/
-│   │       ├── app.scss              # Application-wide styles
-│   │       ├── base.scss             # CSS reset and base
-│   │       └── util.scss             # Utility classes
-│   ├── components/                   # Shared/reusable components
-│   │   ├── AccountsSummary/          # Pool status widget
-│   │   ├── AppContext/               # Global app state
-│   │   ├── AppLayout/                # Main layout + navigation
-│   │   ├── Authenticator/            # Auth wrapper
-│   │   ├── BudgetProgressBar/        # Budget visualization
-│   │   ├── Form/                     # Form context/helpers
-│   │   ├── Loader/                   # Loading spinners
-│   │   ├── Markdown/                 # MD renderer
-│   │   ├── ThresholdSettings/        # Budget/duration thresholds
-│   │   └── Toast/                    # Notifications
-│   ├── domains/                      # Feature-based organization
-│   │   ├── home/                     # Dashboard
-│   │   │   ├── components/
-│   │   │   │   ├── AccountsPanel.tsx
-│   │   │   │   ├── ApprovalsPanel.tsx
-│   │   │   │   ├── LeasePanel.tsx
-│   │   │   │   └── MyLeases.tsx
-│   │   │   └── pages/Home.tsx
-│   │   ├── leases/                   # Lease management
-│   │   │   ├── components/
-│   │   │   ├── pages/
-│   │   │   │   ├── ListLeases.tsx
-│   │   │   │   ├── RequestLease.tsx
-│   │   │   │   ├── AssignLease.tsx   # Manager assigns to user
-│   │   │   │   ├── UpdateLease.tsx   # Edit/extend lease
-│   │   │   │   ├── ListApprovals.tsx
-│   │   │   │   └── ApprovalDetails.tsx
-│   │   │   ├── service.ts            # API calls
-│   │   │   ├── hooks.ts              # React Query hooks
-│   │   │   ├── helpers.ts
-│   │   │   └── types.ts
-│   │   ├── leaseTemplates/           # Template admin
-│   │   │   ├── components/
-│   │   │   │   ├── BasicDetailsForm.tsx
-│   │   │   │   ├── BudgetForm.tsx
-│   │   │   │   ├── DurationForm.tsx
-│   │   │   │   └── CostReportForm.tsx
-│   │   │   ├── pages/
-│   │   │   │   ├── ListLeaseTemplates.tsx
-│   │   │   │   ├── AddLeaseTemplate.tsx
-│   │   │   │   └── UpdateLeaseTemplate.tsx
-│   │   │   └── formFields/
-│   │   ├── accounts/                 # Pool management
-│   │   │   ├── pages/
-│   │   │   │   ├── ListAccounts.tsx
-│   │   │   │   └── AddAccounts.tsx
-│   │   │   └── service.ts
-│   │   └── settings/                 # Global configuration
-│   │       └── pages/Settings.tsx
-│   ├── hooks/                        # Custom React hooks
-│   │   └── useModal.tsx
-│   ├── App.tsx                       # Root component + routing
-│   └── main.tsx                      # Entry point
-├── index.html                        # HTML template
-├── package.json
-├── vite.config.ts
-└── tsconfig.json
+    SPA -->|HTTPS /api/*| CF_API
+    CF_API --> CF_FN_REWRITE
+    CF_FN_REWRITE --> WAF
+    WAF --> APIGW
+    APIGW --> AUTH_LAMBDA
+    AUTH_LAMBDA --> LEASES_API
+    AUTH_LAMBDA --> TEMPLATES_API
+    AUTH_LAMBDA --> ACCOUNTS_API
+    AUTH_LAMBDA --> CONFIG_API
+    APIGW --> SSO_API
 ```
 
 ---
 
-## Build Process & Deployment
+## Technology Stack
 
-### Vite Build Configuration
+| Layer | Technology | Version | Purpose |
+|-------|-----------|---------|---------|
+| Framework | React | 18.3.1 | UI component library |
+| Language | TypeScript | 5.5.4 | Type-safe development |
+| Build Tool | Vite | 7.2.2 | Dev server and production bundler |
+| UI Library | AWS Cloudscape Design System | 3.0.957 | AWS-native component library |
+| Data Fetching | TanStack Query (React Query) | 5.74.4 | Server state management with caching |
+| Routing | React Router | 6.30.1 | Client-side SPA routing |
+| Notifications | react-toastify | 11.0.2 | Toast notification system |
+| Markdown | react-markdown | 9.0.3 | Help page rendering |
+| Animation | framer-motion | 11.3.28 | Page transitions |
+| Icons | react-icons | 5.3.0 | Icon library |
+| Date | moment | 2.30.1 | Date formatting |
+| Styling | SCSS | via sass 1.77.8 | Custom styles |
+| Testing | Vitest + Testing Library | -- | Unit and component testing |
+| Mocking | MSW | 2.3.1 | API mocking for tests |
 
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/vite.config.ts`
+**Source**: `source/frontend/package.json`
+
+---
+
+## Application Structure
+
+### Folder Layout
+
+```
+source/frontend/
+  public/
+    markdown/                     # Help documentation (rendered with react-markdown)
+      home.md, leases.md, request.md, approvals.md,
+      accounts.md, lease-templates.md, settings.md
+    favicon.ico, logo192.png, logo512.png, manifest.json
+  src/
+    assets/
+      images/logo.png
+      styles/
+        app.scss                  # Application-wide styles
+        base.scss                 # CSS reset and base
+        util.scss                 # Utility classes
+    components/                   # Shared/reusable components
+      AccountsSummary/            # Pool status pie chart + table
+      Animate/                    # Page transition wrapper
+      AppContext/                 # Global app state provider
+      AppLayout/                  # Main layout shell with navigation
+      Authenticator/              # Auth check wrapper
+      BudgetProgressBar/          # Budget visualization
+      Form/                       # Form context and helpers
+      FullPageLoader/             # Loading spinner
+      Loader/                     # Inline loader
+      Markdown/                   # Markdown renderer component
+      ThresholdSettings/          # Budget/duration threshold editor
+      Toast/                      # Toast notification helper
+    domains/                      # Feature-based module organization
+      home/
+        components/
+          AccountsPanel.tsx       # Pool capacity summary
+          ApprovalsPanel.tsx      # Pending approvals count
+          LeasePanel.tsx          # Lease statistics
+          MyLeases.tsx            # User's active leases
+        pages/Home.tsx            # Dashboard page
+      leases/
+        components/               # Lease-specific UI components
+        pages/
+          ListLeases.tsx          # Lease table with filters
+          RequestLease.tsx        # New lease request form
+          AssignLease.tsx         # Manager assigns to user
+          UpdateLease.tsx         # Edit/extend lease
+          ListApprovals.tsx       # Pending approval queue
+          ApprovalDetails.tsx     # Review and approve/deny
+        service.ts                # API calls for leases
+        hooks.ts                  # React Query hooks
+        helpers.ts                # Utility functions
+        types.ts                  # TypeScript interfaces
+      leaseTemplates/
+        components/
+          BasicDetailsForm.tsx    # Name, description, visibility
+          BudgetForm.tsx          # Budget and thresholds
+          DurationForm.tsx        # Duration and thresholds
+          CostReportForm.tsx      # Cost reporting group
+        pages/
+          ListLeaseTemplates.tsx  # Template catalog
+          AddLeaseTemplate.tsx    # Create new template
+          UpdateLeaseTemplate.tsx # Edit existing template
+        formFields/               # Reusable form field components
+      accounts/
+        pages/
+          ListAccounts.tsx        # Pool account inventory
+          AddAccounts.tsx         # Register new accounts
+        service.ts                # API calls for accounts
+      settings/
+        pages/Settings.tsx        # Global configuration editor
+    helpers/
+      AuthService.ts              # SAML SSO login/logout helpers
+    hooks/
+      useModal.tsx                # Modal state management
+      useUser.tsx                 # Current user context hook
+    lib/
+      api.ts                      # Axios-based API client
+    App.tsx                       # Root component with routes
+    main.tsx                      # Entry point (React.createRoot)
+  index.html                      # HTML template
+  package.json
+  vite.config.ts
+  tsconfig.json
+```
+
+**Source**: `source/frontend/src/`
+
+---
+
+## Routing and Pages
+
+### Route Configuration
+
+All routes are defined in `App.tsx`:
 
 ```typescript
-import react from "@vitejs/plugin-react";
-import path from "path";
-import { defineConfig } from "vite";
+const routes = [
+  { path: "/",                          Element: Home },
+  { path: "/request",                   Element: RequestLease },
+  { path: "/assign",                    Element: AssignLease },
+  { path: "/settings",                  Element: Settings },
+  { path: "/lease_templates",           Element: ListLeaseTemplates },
+  { path: "/lease_templates/new",       Element: AddLeaseTemplate },
+  { path: "/lease_templates/edit/:uuid", Element: UpdateLeaseTemplate },
+  { path: "/accounts",                  Element: ListAccounts },
+  { path: "/accounts/new",             Element: AddAccounts },
+  { path: "/approvals",                Element: ListApprovals },
+  { path: "/approvals/:leaseId",       Element: ApprovalDetails },
+  { path: "/leases",                   Element: ListLeases },
+  { path: "/leases/edit/:leaseId",     Element: UpdateLease },
+];
+```
 
+### Role-Based Access
+
+Routes are filtered in the navigation sidebar based on user roles:
+
+| Route | User | Manager | Admin | Description |
+|-------|:----:|:-------:|:-----:|-------------|
+| `/` (Home) | Yes | Yes | Yes | Dashboard with lease stats and panels |
+| `/request` | Yes | Yes | Yes | Request a new sandbox lease |
+| `/leases` | Yes | Yes | Yes | View own leases (all leases for Manager/Admin) |
+| `/leases/edit/:leaseId` | Yes | Yes | Yes | Update/extend a lease |
+| `/assign` | -- | Yes | Yes | Create lease on behalf of another user |
+| `/approvals` | -- | Yes | Yes | View and action pending approval queue |
+| `/approvals/:leaseId` | -- | Yes | Yes | Detailed approval review |
+| `/lease_templates` | Yes | Yes | Yes | Browse lease templates (create/edit for Admin/Manager) |
+| `/lease_templates/new` | -- | Yes | Yes | Create new template |
+| `/lease_templates/edit/:uuid` | -- | Yes | Yes | Edit existing template |
+| `/accounts` | -- | -- | Yes | Pool account management |
+| `/accounts/new` | -- | -- | Yes | Register new accounts |
+| `/settings` | -- | -- | Yes | Global configuration (AppConfig) |
+
+**Source**: `source/frontend/src/App.tsx`, `source/lambdas/api/authorizer/src/authorization-map.ts`
+
+---
+
+## Authentication Flow
+
+### SAML SSO with IAM Identity Center
+
+```mermaid
+sequenceDiagram
+    participant Browser as User Browser
+    participant CF as CloudFront
+    participant App as React SPA
+    participant IDC as IAM Identity Center
+    participant SSO as SSO Handler Lambda
+    participant SM as Secrets Manager
+
+    Browser->>CF: GET /
+    CF->>App: Load index.html + JS bundle
+
+    App->>App: Authenticator checks for JWT token
+    alt No JWT or expired
+        App->>IDC: Redirect to SAML sign-in URL
+        IDC->>Browser: Login form
+        Browser->>IDC: Credentials
+        IDC->>App: SAML assertion (POST /api/auth/saml/callback)
+        App->>CF: POST /api/auth/saml/callback
+        CF->>SSO: Forward to SSO Handler
+        SSO->>SM: Get IDP certificate
+        SSO->>SSO: Validate SAML assertion
+        SSO->>SM: Get JWT signing secret
+        SSO->>SSO: Generate JWT with user email + roles
+        SSO-->>App: JWT token
+        App->>App: Store JWT, extract user info
+    end
+
+    App->>App: Render UI based on roles
+
+    Note over App: Subsequent API calls
+    App->>CF: GET /api/leases (Authorization: Bearer JWT)
+    CF->>SSO: Strip /api, forward to API Gateway
+    Note over SSO: Authorizer Lambda validates JWT
+```
+
+The `Authenticator` component (`source/frontend/src/components/Authenticator/index.tsx`) wraps the entire application. It uses the `useUser` hook to check for a valid JWT token. If no user is found, it calls `AuthService.login()` which redirects the browser to the IAM Identity Center sign-in URL (configured in AppConfig's `auth.idpSignInUrl`).
+
+The JWT contains:
+- `email`: User's email address
+- Roles derived from IDC group membership (Admin, Manager, User)
+- Expiry based on `auth.sessionDurationInMinutes` (default: 60 minutes)
+
+The JWT signing secret is stored in Secrets Manager and rotated every 30 days.
+
+**Source**: `source/frontend/src/components/Authenticator/index.tsx`, `source/lambdas/api/sso-handler/`
+
+---
+
+## State Management
+
+### TanStack Query Configuration
+
+```typescript
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      retry: false,
+    },
+  },
+});
+```
+
+This conservative configuration avoids excessive API calls. Data is cached and only refreshed on explicit user action or mutation invalidation.
+
+**Cache key patterns**:
+- `['leases', filters]` -- Lease list
+- `['lease', leaseId]` -- Single lease
+- `['leaseTemplates']` -- Template list
+- `['leaseTemplate', uuid]` -- Single template
+- `['accounts']` -- Account list
+- `['configurations']` -- AppConfig settings
+
+### API Client
+
+The frontend makes API calls to `/api/*` which CloudFront proxies to API Gateway. Each request includes the JWT token in the `Authorization` header.
+
+The service layer pattern uses separate `service.ts` files per domain:
+- `source/frontend/src/domains/leases/service.ts`
+- `source/frontend/src/domains/accounts/service.ts`
+- etc.
+
+React Query hooks in `hooks.ts` wrap service calls with caching, invalidation, and loading state management.
+
+---
+
+## Key Pages
+
+### Home Dashboard
+
+**Route**: `/`
+**Component**: `domains/home/pages/Home.tsx`
+
+The dashboard displays four panels:
+- **MyLeases**: Current user's active leases with status badges
+- **LeasePanel**: Quick statistics (active, pending, expired counts)
+- **AccountsPanel**: Pool capacity visualization (available vs. leased vs. quarantine)
+- **ApprovalsPanel**: Pending approval count (Manager/Admin only)
+
+### Request Lease
+
+**Route**: `/request`
+**Component**: `domains/leases/pages/RequestLease.tsx`
+
+Form fields:
+1. **Lease Template** (dropdown): Fetches from `/leaseTemplates` (PUBLIC visibility for Users, all for Admins/Managers)
+2. **Comments** (textarea, optional): Justification for the request
+3. **Terms of Service**: Displayed from AppConfig `termsOfService`, must be accepted
+
+Submission triggers `POST /leases` with the selected template UUID and comments.
+
+### Assign Lease
+
+**Route**: `/assign`
+**Component**: `domains/leases/pages/AssignLease.tsx`
+**Access**: Manager and Admin only
+
+Allows creating a lease on behalf of another user. Additional field for target user email. Uses `POST /leases` with the `userEmail` field set to the target.
+
+### List Leases
+
+**Route**: `/leases`
+**Component**: `domains/leases/pages/ListLeases.tsx`
+
+Cloudscape Table with:
+- Filtering by status, template, owner
+- Sorting by creation date, expiration date
+- Pagination
+- Actions: View, Edit, Terminate, Freeze/Unfreeze
+
+### Approval Queue
+
+**Route**: `/approvals`
+**Component**: `domains/leases/pages/ListApprovals.tsx`
+**Access**: Manager and Admin only
+
+Lists all `PendingApproval` leases with approve/deny quick actions.
+
+### Approval Details
+
+**Route**: `/approvals/:leaseId`
+**Component**: `domains/leases/pages/ApprovalDetails.tsx`
+**Access**: Manager and Admin only
+
+Displays full lease request details (requester, template, budget, duration, comments) with Approve and Deny buttons. Deny requires a reason.
+
+### Lease Templates
+
+**Route**: `/lease_templates`
+**Component**: `domains/leaseTemplates/pages/ListLeaseTemplates.tsx`
+
+Catalog of available lease templates. Admins and Managers can create/edit/delete templates.
+
+### Template Editor
+
+**Route**: `/lease_templates/new` or `/lease_templates/edit/:uuid`
+**Components**: `AddLeaseTemplate.tsx`, `UpdateLeaseTemplate.tsx`
+
+Multi-section form:
+1. **BasicDetailsForm**: Name, description, visibility (PUBLIC/PRIVATE), requires approval toggle
+2. **BudgetForm**: Max spend, budget thresholds with actions (ALERT/FREEZE_ACCOUNT)
+3. **DurationForm**: Duration in hours, duration thresholds with actions
+4. **CostReportForm**: Cost reporting group assignment
+
+### Account Pool
+
+**Route**: `/accounts`
+**Component**: `domains/accounts/pages/ListAccounts.tsx`
+**Access**: Admin only
+
+Displays all pool accounts with status, lease association, and actions (retry cleanup, eject).
+
+### Add Accounts
+
+**Route**: `/accounts/new`
+**Component**: `domains/accounts/pages/AddAccounts.tsx`
+**Access**: Admin only
+
+Displays unregistered accounts found in sandbox OUs (via `GET /accounts/unregistered`) and allows bulk registration.
+
+### Settings
+
+**Route**: `/settings`
+**Component**: `domains/settings/pages/Settings.tsx`
+**Access**: Admin only
+
+Configuration editor for AppConfig profiles:
+- Global settings (maintenance mode, lease limits, auth, notifications)
+- Nuke configuration (protected resources, settings)
+- Reporting configuration
+
+---
+
+## Hosting Infrastructure
+
+### S3 Bucket
+
+- KMS-encrypted with customer-managed key
+- Versioning enabled
+- Public access blocked (CloudFront OAC only)
+- Deletion protection in production mode
+
+### CloudFront Distribution
+
+| Setting | Value |
+|---------|-------|
+| Default origin | S3 bucket via Origin Access Control (OAC) |
+| API origin | API Gateway REST API (`/api/*`) |
+| Viewer protocol | HTTPS redirect |
+| Price class | All edge locations |
+| HTTP version | HTTP/2 |
+| Minimum TLS | TLS 1.2 (2019 policy) |
+| IPv6 | Disabled |
+| Default root object | `index.html` |
+
+**Cache behaviors**:
+
+| Path | Origin | Cache | Function |
+|------|--------|-------|----------|
+| Default (`/*`) | S3 | CACHING_OPTIMIZED | `IsbS3OriginPathRedirectCloudFrontFunction` (SPA routing) |
+| `/api/*` | API Gateway | CACHING_DISABLED | `IsbPathRewriteCloudFrontFunction` (strip `/api` prefix) |
+
+**CloudFront Functions**:
+
+1. **Path Redirect** (`IsbS3OriginPathRedirectCloudFrontFunction`): Rewrites requests without a file extension to `/index.html`, enabling client-side routing (e.g., `/leases` serves `index.html`, not a 404).
+
+2. **API Path Rewrite** (`IsbPathRewriteCloudFrontFunction`): Strips the `/api` prefix before forwarding to API Gateway (e.g., `/api/leases` becomes `/leases`).
+
+### Security Headers
+
+The CloudFront Response Headers Policy enforces:
+
+| Header | Value |
+|--------|-------|
+| `Content-Security-Policy` | `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; upgrade-insecure-requests;` |
+| `Strict-Transport-Security` | `max-age=46656000; includeSubDomains` (540 days) |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `no-referrer` |
+| `Cache-Control` | `no-store, no-cache` |
+
+**Source**: `source/infrastructure/lib/components/cloudfront/cloudfront-ui-api.ts`
+
+---
+
+## Build and Deployment
+
+### Build Process
+
+The frontend is built at CDK synth time by the `buildFrontend()` function in the CloudFront construct:
+
+1. `npm run build` is executed in `source/frontend/`
+2. TypeScript type checking (`tsc --incremental --noEmit`)
+3. Vite production build (`vite build`)
+4. Output to `source/frontend/dist/`
+5. CDK's `BucketDeployment` uploads `dist/` to S3
+6. CloudFront invalidation triggered for `/*`
+
+### Vite Configuration
+
+```typescript
 export default defineConfig({
   resolve: {
     alias: {
@@ -201,1077 +501,106 @@ export default defineConfig({
   plugins: [react()],
   build: {
     chunkSizeWarningLimit: 3000,
-    rollupOptions: {
-      onwarn(warning, defaultHandler) {
-        // Custom warning suppression
-        if (warning.code === "UNRESOLVED_IMPORT") {
-          return;
-        }
-        defaultHandler(warning);
-      },
-    },
   },
 });
 ```
 
-### Package Scripts
+The `@amzn/innovation-sandbox-frontend` alias maps to `src/`, enabling clean imports throughout the codebase.
 
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/package.json`
+**Source**: `source/frontend/vite.config.ts`
 
-```json
-{
-  "scripts": {
-    "dev": "vite",                                      // Dev server (port 5173)
-    "start": "vite",                                    // Alias for dev
-    "build": "tsc --noEmit && vite build",              // Type check + production build
-    "lint": "eslint . --ext ts,tsx && stylelint ...",   // Code quality
-    "lint:fix": "eslint . --fix && stylelint --fix",    // Auto-fix
-    "preview": "vite preview",                          // Preview production build
-    "test": "vitest run --coverage"                     // Unit tests
-  }
-}
-```
+---
 
-### Build Output
+## Cloudscape Design System Components
 
-```
-dist/
-├── assets/
-│   ├── app-[hash].js           # Application bundle (~2.8MB)
-│   ├── app-[hash].css          # Compiled styles
-│   ├── vendor-[hash].js        # Third-party libraries (code-split)
-│   └── logo-[hash].png         # Assets with hashed filenames
-└── index.html                  # Entry HTML with injected script tags
-```
+The frontend uses AWS Cloudscape Design System exclusively for UI components. Key components in use:
 
-### Deployment Pipeline
+| Component | Usage |
+|-----------|-------|
+| `Table` | Lease lists, account lists, template lists |
+| `Form`, `FormField`, `Input`, `Select`, `Textarea` | All forms (request, template, settings) |
+| `Button`, `SpaceBetween`, `Box` | Layouts and actions |
+| `Container`, `Header` | Page sections |
+| `StatusIndicator` | Lease and account status badges |
+| `ProgressBar` | Budget consumption visualization |
+| `Flashbar` | Inline notification banners |
+| `Modal` | Confirmation dialogs |
+| `Pagination` | Table pagination |
+| `SideNavigation` | Navigation sidebar |
+| `TopNavigation` | App header with user menu |
+| `PieChart` | Account pool distribution |
+| `Tabs` | Settings page sections |
+
+Additional library: `@aws-northstar/ui` (1.4.2) extends Cloudscape with higher-level components.
+
+---
+
+## Component Hierarchy
 
 ```mermaid
-sequenceDiagram
-    participant DEV as Developer
-    participant GIT as GitHub
-    participant CODEPIPELINE as CodePipeline
-    participant CODEBUILD as CodeBuild
-    participant S3 as S3 Bucket
-    participant CF as CloudFront
+graph TD
+    App["App.tsx"]
+    QC["QueryClientProvider"]
+    AUTH["Authenticator"]
+    ROUTER["BrowserRouter"]
+    MODAL["ModalProvider"]
+    LAYOUT["AppLayout"]
+    ROUTES["Routes"]
+    TOAST["ToastContainer"]
 
-    DEV->>GIT: Push to main branch
-    GIT->>CODEPIPELINE: Trigger webhook
-    CODEPIPELINE->>CODEBUILD: Start build
+    App --> QC
+    QC --> AUTH
+    AUTH --> ROUTER
+    AUTH --> TOAST
+    ROUTER --> MODAL
+    MODAL --> LAYOUT
+    LAYOUT --> ROUTES
 
-    Note over CODEBUILD: 1. npm ci
-    Note over CODEBUILD: 2. npm run build
-    Note over CODEBUILD: 3. Generate buildspec
-
-    CODEBUILD->>S3: Upload dist/ files
-    S3->>S3: Set Cache-Control headers
-    CODEBUILD->>CF: Create invalidation
-    CF->>CF: Purge edge cache
-
-    CF-->>DEV: Deployment complete
+    ROUTES --> HOME["Home"]
+    ROUTES --> REQ["RequestLease"]
+    ROUTES --> ASSIGN["AssignLease"]
+    ROUTES --> LEASES["ListLeases"]
+    ROUTES --> EDIT["UpdateLease"]
+    ROUTES --> APPROVALS["ListApprovals"]
+    ROUTES --> APPROVAL_DETAIL["ApprovalDetails"]
+    ROUTES --> TEMPLATES["ListLeaseTemplates"]
+    ROUTES --> ADD_TEMPLATE["AddLeaseTemplate"]
+    ROUTES --> EDIT_TEMPLATE["UpdateLeaseTemplate"]
+    ROUTES --> ACCOUNTS["ListAccounts"]
+    ROUTES --> ADD_ACCOUNTS["AddAccounts"]
+    ROUTES --> SETTINGS["Settings"]
 ```
 
-**Build Steps:**
-1. Install dependencies (`npm ci`)
-2. TypeScript compilation check (`tsc --noEmit`)
-3. Vite production build (`vite build`)
-4. Upload to S3 with versioned filenames
-5. CloudFront cache invalidation for `index.html`
+The component hierarchy wraps every page in:
+1. **QueryClientProvider**: TanStack Query cache
+2. **Authenticator**: JWT check, SSO redirect if unauthenticated
+3. **BrowserRouter**: Client-side routing
+4. **ModalProvider**: Global modal state
+5. **AppLayout**: Cloudscape shell with side navigation and top bar
 
 ---
 
-## Hosting Architecture
+## Testing
 
-### S3 Static Website Configuration
+The frontend uses Vitest with Testing Library for unit and component tests:
 
-**Bucket:** `innovation-sandbox-ui-<account-id>`
+- **Test runner**: Vitest (`vitest run --coverage`)
+- **DOM environment**: jsdom
+- **Component testing**: `@testing-library/react` with `@testing-library/user-event`
+- **API mocking**: MSW (Mock Service Worker) for intercepting API calls
 
-**Configuration:**
-- **Static website hosting:** Enabled
-- **Index document:** `index.html`
-- **Error document:** `index.html` (SPA routing)
-- **Versioning:** Enabled (optional)
-- **Encryption:** AES-256 (SSE-S3)
-- **Public access:** Blocked (CloudFront only)
+Tests are located alongside their source files or in dedicated test directories.
 
-**Bucket Policy:**
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "cloudfront.amazonaws.com"
-      },
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::innovation-sandbox-ui-*/*",
-      "Condition": {
-        "StringEquals": {
-          "AWS:SourceArn": "arn:aws:cloudfront::123456789012:distribution/E1ABCD"
-        }
-      }
-    }
-  ]
-}
-```
-
-### CloudFront Distribution
-
-**Distribution ID:** `E1ABCD` (example)
-
-**Configuration:**
-
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| **Origin** | `innovation-sandbox-ui.s3.amazonaws.com` | S3 bucket |
-| **Origin Access** | Origin Access Control (OAC) | Secure S3 access |
-| **Viewer Protocol** | HTTPS Only | Security |
-| **Allowed Methods** | GET, HEAD, OPTIONS | Read-only |
-| **Cached Methods** | GET, HEAD | Performance |
-| **Compression** | gzip, Brotli | Bandwidth savings |
-| **Default TTL** | 86400 (24 hours) | Static assets |
-| **Custom Error Response** | 404 → /index.html (200) | SPA routing |
-| **WAF Integration** | AWS WAF Web ACL | DDoS/bot protection |
-
-**Cache Behaviors:**
-
-| Path Pattern | TTL | Headers | Purpose |
-|--------------|-----|---------|---------|
-| `/assets/*` | 1 year | None | Immutable JS/CSS (hashed filenames) |
-| `/index.html` | 0 (no cache) | All | Always fetch latest SPA shell |
-| `/markdown/*` | 1 hour | None | Help documentation |
-| Default | 24 hours | Authorization | API proxy (if applicable) |
-
-**Security Headers (Custom Response Headers):**
-```yaml
-Strict-Transport-Security: max-age=31536000; includeSubDomains
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-X-XSS-Protection: 1; mode=block
-Referrer-Policy: strict-origin-when-cross-origin
-```
-
----
-
-## Authentication Flow
-
-### Cognito Integration
-
-```mermaid
-sequenceDiagram
-    participant USER as User Browser
-    participant APP as React App
-    participant CF as CloudFront
-    participant COGNITO as Cognito User Pool
-    participant APIGW as API Gateway
-    participant LAMBDA as Lambda
-
-    USER->>APP: Access /
-    APP->>APP: Check localStorage for JWT
-
-    alt No JWT or expired
-        APP->>COGNITO: Redirect to Hosted UI
-        COGNITO->>USER: Login form (email + password)
-        USER->>COGNITO: Submit credentials
-        COGNITO->>APP: Redirect with authorization code
-        APP->>COGNITO: Exchange code for JWT
-        COGNITO-->>APP: ID Token + Access Token
-        APP->>APP: Store JWT in localStorage
-    end
-
-    APP->>APP: Decode JWT (no verification)
-    APP->>APP: Extract user.email, user.roles
-    APP->>APP: Render UI based on roles
-
-    USER->>APP: Request leases
-    APP->>APIGW: GET /leases (Authorization: Bearer JWT)
-    APIGW->>APIGW: Verify JWT signature
-    APIGW->>LAMBDA: Invoke with decoded user
-    LAMBDA-->>APIGW: Lease data
-    APIGW-->>APP: JSON response
-    APP->>USER: Render lease table
-```
-
-### Authenticator Component
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/components/Authenticator/index.tsx`
-
-**Key Responsibilities:**
-1. Check for JWT token in localStorage
-2. Decode JWT to extract user object
-3. Validate token expiration (client-side)
-4. Redirect to Cognito Hosted UI if unauthenticated
-5. Provide user context to child components
-6. Handle token refresh (if refresh token present)
-
-**JWT Structure:**
-```json
-{
-  "header": {
-    "alg": "RS256",
-    "typ": "JWT"
-  },
-  "payload": {
-    "sub": "550e8400-e29b-41d4-a716-446655440000",
-    "email": "user@example.gov.uk",
-    "cognito:groups": ["IsbUsers"],
-    "user": {
-      "email": "user@example.gov.uk",
-      "roles": ["User"]
-    },
-    "exp": 1735689600,
-    "iat": 1735603200
-  }
-}
-```
-
-**Role Mapping:**
-- **Cognito Group:** `IsbAdmins` → **App Role:** `Admin`
-- **Cognito Group:** `IsbManagers` → **App Role:** `Manager`
-- **Cognito Group:** `IsbUsers` → **App Role:** `User`
-
----
-
-## API Integration
-
-### Service Layer Pattern
-
-Each domain has a `service.ts` file encapsulating API calls:
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leases/service.ts`
-
-```typescript
-import { apiClient } from '@amzn/innovation-sandbox-frontend/lib/api';
-
-export const leaseService = {
-  // List all leases (with optional filters)
-  listLeases: async (filters?: LeaseFilters) => {
-    const params = new URLSearchParams(filters);
-    return apiClient.get(`/leases?${params}`);
-  },
-
-  // Get single lease by ID
-  getLease: async (leaseId: string) => {
-    return apiClient.get(`/leases/${leaseId}`);
-  },
-
-  // Create new lease
-  createLease: async (payload: CreateLeaseRequest) => {
-    return apiClient.post('/leases', payload);
-  },
-
-  // Update lease (extend, modify)
-  updateLease: async (leaseId: string, updates: UpdateLeaseRequest) => {
-    return apiClient.put(`/leases/${leaseId}`, updates);
-  },
-
-  // Terminate lease
-  deleteLease: async (leaseId: string) => {
-    return apiClient.delete(`/leases/${leaseId}`);
-  },
-
-  // Approve pending lease (managers only)
-  approveLease: async (leaseId: string, decision: 'APPROVED' | 'DENIED', reason?: string) => {
-    return apiClient.post(`/leases/${leaseId}/review`, { decision, reason });
-  },
-
-  // Freeze lease
-  freezeLease: async (leaseId: string) => {
-    return apiClient.post(`/leases/${leaseId}/freeze`);
-  },
-
-  // Unfreeze lease
-  unfreezeLease: async (leaseId: string) => {
-    return apiClient.post(`/leases/${leaseId}/unfreeze`);
-  },
-};
-```
-
-### API Client Configuration
-
-```typescript
-// src/lib/api.ts
-import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
-
-export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Request interceptor: Add JWT token
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('idToken');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// Response interceptor: Handle errors
-apiClient.interceptors.response.use(
-  (response) => response.data,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Token expired, redirect to login
-      localStorage.removeItem('idToken');
-      window.location.href = '/login';
-    }
-    return Promise.reject(error);
-  }
-);
-```
-
-### React Query Hooks
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leases/hooks.ts`
-
-```typescript
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { leaseService } from './service';
-
-// Fetch all leases (with caching)
-export const useLeases = (filters?: LeaseFilters) => {
-  return useQuery({
-    queryKey: ['leases', filters],
-    queryFn: () => leaseService.listLeases(filters),
-    staleTime: 30000, // 30 seconds
-  });
-};
-
-// Fetch single lease
-export const useLease = (leaseId: string) => {
-  return useQuery({
-    queryKey: ['lease', leaseId],
-    queryFn: () => leaseService.getLease(leaseId),
-    enabled: !!leaseId,
-  });
-};
-
-// Create lease mutation
-export const useCreateLease = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: leaseService.createLease,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['leases'] });
-    },
-  });
-};
-
-// Update lease mutation
-export const useUpdateLease = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ leaseId, updates }: { leaseId: string; updates: UpdateLeaseRequest }) =>
-      leaseService.updateLease(leaseId, updates),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['lease', variables.leaseId] });
-      queryClient.invalidateQueries({ queryKey: ['leases'] });
-    },
-  });
-};
-```
-
-**Benefits:**
-- **Caching:** Avoid redundant API calls
-- **Background refetching:** Keep data fresh
-- **Optimistic updates:** Instant UI feedback
-- **Cache invalidation:** Automatic data refresh on mutations
-
----
-
-## Page Components
-
-### 1. Home / Dashboard
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/home/pages/Home.tsx`
-
-**Route:** `/`
-
-**Components:**
-- **MyLeases:** User's active leases (compact cards)
-- **LeasePanel:** Quick stats (active, pending, expired)
-- **AccountsPanel:** Pool capacity (pie chart + table)
-- **ApprovalsPanel:** Pending approvals (managers only)
-
-**Data Sources:**
-- `GET /leases?ownerId={currentUser.email}`
-- `GET /accounts`
-- `GET /leases?status=PendingApproval` (managers)
-
-### 2. Request Lease
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leases/pages/RequestLease.tsx`
-
-**Route:** `/request`
-
-**Form Fields:**
-1. **Lease Template** (dropdown)
-   - Fetches from `GET /templates?visibility=PUBLIC`
-   - Displays template name, duration, budget
-2. **User Email** (text, optional for admins/managers)
-   - Defaults to current user
-   - Admins can create leases for others
-3. **Comments** (textarea, optional)
-   - Justification for lease request
-
-**Submission Flow:**
-1. Validate form (client-side)
-2. `POST /leases` with payload
-3. Show success toast
-4. Redirect to `/leases` or `/` (depending on auto-approve)
-
-**Auto-Approve Logic:**
-- If user has `Admin` role → immediate approval
-- If template allows auto-approve → immediate approval
-- Otherwise → `PendingApproval` state
-
-### 3. List Leases
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leases/pages/ListLeases.tsx`
-
-**Route:** `/leases`
-
-**Features:**
-- **Filters:** Status, Owner, Template, Date range
-- **Sorting:** Creation date, Expiration date, Budget
-- **Pagination:** 25/50/100 per page
-- **Actions:**
-  - **View:** Navigate to `/leases/{leaseId}`
-  - **Edit:** Navigate to `/leases/edit/{leaseId}`
-  - **Terminate:** Confirm modal → `DELETE /leases/{leaseId}`
-  - **Freeze/Unfreeze:** `POST /leases/{leaseId}/freeze|unfreeze`
-  - **Extend:** Open extend modal → `PUT /leases/{leaseId}`
-
-**Columns:**
-| Column | Data | Format |
-|--------|------|--------|
-| Lease ID | `uuid.substring(0, 8)` | Truncated UUID |
-| Owner | `userEmail` | Email |
-| Account | `accountId` | AWS Account ID |
-| Status | `status` | Badge (color-coded) |
-| Template | `templateName` | Link |
-| Budget | `maxSpend` | Currency (`$123.45`) |
-| Duration | `durationHours` | Human readable (`3 days`) |
-| Expires | `expiresAt` | Relative time (`in 2 hours`) |
-| Actions | - | Button group |
-
-### 4. List Approvals
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leases/pages/ListApprovals.tsx`
-
-**Route:** `/approvals`
-
-**Access:** Managers and Admins only
-
-**Features:**
-- List leases with `status=PendingApproval`
-- Quick approve/deny actions
-- Bulk selection for batch operations
-- Filter by requester, template, date
-
-**Actions:**
-- **Approve:** `POST /leases/{leaseId}/review` with `decision=APPROVED`
-- **Deny:** `POST /leases/{leaseId}/review` with `decision=DENIED` + reason
-
-### 5. Approval Details
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leases/pages/ApprovalDetails.tsx`
-
-**Route:** `/approvals/{leaseId}`
-
-**Displays:**
-- Requester information (email, organization)
-- Requested template details
-- Budget and duration
-- Comments/justification
-- User's lease history (previous leases, compliance)
-- Account availability status
-
-**Decision Form:**
-- **Approve Button:** Green, prominent
-- **Deny Button:** Red, requires reason (textarea)
-- **Comments:** Manager can add notes
-
-### 6. Assign Lease (Manager Feature)
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leases/pages/AssignLease.tsx`
-
-**Route:** `/assign`
-
-**Access:** Managers and Admins only
-
-**Purpose:** Create lease on behalf of another user
-
-**Form Fields:**
-- User email (required, autocomplete from Identity Center)
-- Lease template
-- Custom budget/duration (optional override)
-- Comments
-
-**Submission:** `POST /leases` with `userEmail` + `createdBy` metadata
-
-### 7. List Lease Templates
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leaseTemplates/pages/ListLeaseTemplates.tsx`
-
-**Route:** `/lease_templates`
-
-**Access:** All users (view), Admins only (create/edit)
-
-**Features:**
-- Filter by visibility (PUBLIC, PRIVATE)
-- Search by name
-- Sort by creation date, usage count
-- Clone template (create copy)
-
-**Actions:**
-- **Create:** Navigate to `/lease_templates/new` (admins)
-- **Edit:** Navigate to `/lease_templates/edit/{uuid}` (admins)
-- **Delete:** Soft delete (set `isActive=false`)
-- **Clone:** Duplicate template with new name
-
-### 8. Add/Update Lease Template
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/leaseTemplates/pages/AddLeaseTemplate.tsx`
-
-**Route:** `/lease_templates/new` or `/lease_templates/edit/{uuid}`
-
-**Form Sections:**
-1. **Basic Details** (`BasicDetailsForm.tsx`)
-   - Template name
-   - Description
-   - Visibility (PUBLIC/PRIVATE)
-   - Cost report group
-
-2. **Budget Configuration** (`BudgetForm.tsx`)
-   - Default budget (USD)
-   - Budget thresholds (e.g., 75%, 90%)
-   - Auto-freeze on threshold breach
-
-3. **Duration Configuration** (`DurationForm.tsx`)
-   - Default duration (hours)
-   - Duration thresholds (e.g., 4 hours remaining)
-   - Max extension allowed
-
-4. **Cost Reporting** (`CostReportForm.tsx`)
-   - Cost report group (for aggregation)
-   - Notification settings
-
-**Validation:**
-- Name required (unique)
-- Budget > 0
-- Duration > 0 and < max (global config)
-- Thresholds in ascending order
-
-### 9. List Accounts
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/accounts/pages/ListAccounts.tsx`
-
-**Route:** `/accounts`
-
-**Access:** Admins only
-
-**Features:**
-- View all pool accounts
-- Filter by status (AVAILABLE, LEASED, QUARANTINE, CLEANUP)
-- Sort by last cleaned date
-- Bulk operations (move to OU, mark for cleanup)
-
-**Columns:**
-| Column | Data | Format |
-|--------|------|--------|
-| Account ID | `accountId` | AWS Account ID |
-| Status | `status` | Status indicator (colored) |
-| Current Lease | `leaseUuid` | Link (if leased) |
-| OU Path | `ouPath` | Organization path |
-| Last Cleaned | `lastCleanedAt` | Relative time |
-| Created | `createdAt` | Date |
-| Actions | - | Button group |
-
-**Actions:**
-- **View Details:** Modal with full account metadata
-- **Force Cleanup:** Trigger cleanup manually
-- **Quarantine:** Move to quarantine OU
-- **Remove from Pool:** Soft delete
-
-### 10. Add Accounts
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/accounts/pages/AddAccounts.tsx`
-
-**Route:** `/accounts/new`
-
-**Access:** Admins only
-
-**Form:**
-- **Account IDs:** Textarea (one per line, supports bulk)
-- **Initial OU:** Dropdown (organization units)
-- **Tags:** Key-value pairs
-
-**Validation:**
-- Account ID format (12 digits)
-- Account exists in AWS Organizations
-- Account not already in pool
-
-**Submission:** `POST /accounts` with array of account objects
-
-### 11. Settings
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/domains/settings/pages/Settings.tsx`
-
-**Route:** `/settings`
-
-**Access:** Admins only
-
-**Configuration Sections:**
-1. **Global Settings** (from AppConfig)
-   - Maintenance mode toggle
-   - Max leases per user
-   - Max budget
-   - Max duration
-   - TTL for expired leases
-
-2. **Cleanup Configuration**
-   - Failed attempts before quarantine
-   - Retry delay
-   - Successful attempts to finish
-
-3. **AWS Nuke Configuration**
-   - Protected resources
-   - Excluded resource types
-   - Nuke config file upload
-
-**API Endpoints:**
-- `GET /configurations/global` → Fetch settings
-- `PUT /configurations/global` → Update settings
-- `GET /configurations/nuke` → Fetch nuke config
-- `PUT /configurations/nuke` → Update nuke config
-
----
-
-## State Management
-
-### AppContext
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/components/AppContext/index.tsx`
-
-**Purpose:** Global application state (user, config, maintenance mode)
-
-```typescript
-interface AppContextType {
-  user: {
-    email: string;
-    roles: ('Admin' | 'Manager' | 'User')[];
-  } | null;
-  config: {
-    maintenanceMode: boolean;
-    maxLeasesPerUser: number;
-    maxBudget: number;
-    maxDurationHours: number;
-  };
-  setUser: (user: AppContextType['user']) => void;
-  setConfig: (config: AppContextType['config']) => void;
-}
-
-export const AppContext = createContext<AppContextType | undefined>(undefined);
-
-export const AppContextProvider = ({ children }) => {
-  const [user, setUser] = useState<AppContextType['user']>(null);
-  const [config, setConfig] = useState<AppContextType['config']>({
-    maintenanceMode: false,
-    maxLeasesPerUser: 3,
-    maxBudget: 5000,
-    maxDurationHours: 168,
-  });
-
-  // Fetch user from JWT on mount
-  useEffect(() => {
-    const token = localStorage.getItem('idToken');
-    if (token) {
-      const decoded = decodeJWT(token);
-      setUser(decoded.user);
-    }
-  }, []);
-
-  // Fetch global config on mount
-  useEffect(() => {
-    fetch('/api/configurations/global')
-      .then(res => res.json())
-      .then(data => setConfig(data));
-  }, []);
-
-  return (
-    <AppContext.Provider value={{ user, config, setUser, setConfig }}>
-      {children}
-    </AppContext.Provider>
-  );
-};
-
-export const useAppContext = () => {
-  const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useAppContext must be used within AppContextProvider');
-  }
-  return context;
-};
-```
-
-### TanStack Query Cache
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/App.tsx`
-
-```typescript
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,   // Don't refetch on tab focus
-      refetchOnMount: false,          // Don't refetch on component mount
-      retry: false,                   // Don't retry failed requests
-      staleTime: 30000,               // Data fresh for 30 seconds
-    },
-  },
-});
-```
-
-**Cache Keys:**
-- `['leases']` → All leases
-- `['lease', leaseId]` → Single lease
-- `['templates']` → All templates
-- `['template', templateId]` → Single template
-- `['accounts']` → All accounts
-- `['account', accountId]` → Single account
-- `['approvals']` → Pending approvals
-- `['config', 'global']` → Global configuration
-
-**Invalidation Strategy:**
-- On mutation success, invalidate related queries
-- Manual refresh button in UI
-- Automatic background refetch (configurable per query)
-
----
-
-## UI Components Library
-
-### AWS Cloudscape Design System
-
-**Package:** `@cloudscape-design/components` v3.0.957
-
-**Key Components Used:**
-
-| Component | Usage | File |
-|-----------|-------|------|
-| `Table` | Data tables (leases, accounts, templates) | `ListLeases.tsx` |
-| `Form` | Form layouts | `RequestLease.tsx` |
-| `FormField` | Form field wrapper | All forms |
-| `Input` | Text inputs | All forms |
-| `Select` | Dropdowns | Template selection |
-| `Button` | Primary/secondary actions | All pages |
-| `Modal` | Dialogs (confirm, details) | Delete confirmations |
-| `SpaceBetween` | Layout spacing | All pages |
-| `Container` | Content boxes | Dashboard panels |
-| `Header` | Page/section headers | All pages |
-| `StatusIndicator` | Status badges | Lease status |
-| `ProgressBar` | Budget/duration progress | Lease details |
-| `Flashbar` | Toast notifications | Success/error messages |
-| `Pagination` | Table pagination | All tables |
-
-### Custom Components
-
-**1. BudgetProgressBar**
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/components/BudgetProgressBar/index.tsx`
-
-```tsx
-interface BudgetProgressBarProps {
-  current: number;      // Current spend
-  max: number;          // Budget limit
-  thresholds?: number[]; // Warning thresholds (e.g., [75, 90])
-}
-
-export const BudgetProgressBar = ({ current, max, thresholds = [75, 90] }) => {
-  const percentage = (current / max) * 100;
-  const color = percentage >= thresholds[1] ? 'red' :
-                percentage >= thresholds[0] ? 'orange' : 'green';
-
-  return (
-    <ProgressBar
-      value={percentage}
-      variant={color}
-      label={`$${current.toFixed(2)} / $${max.toFixed(2)}`}
-      description={`${percentage.toFixed(1)}% of budget`}
-    />
-  );
-};
-```
-
-**2. AccountsSummary (Pie Chart + Table)**
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/components/AccountsSummary/index.tsx`
-
-**Purpose:** Visualize pool account distribution
-
-**Data:**
-```typescript
-interface AccountSummary {
-  AVAILABLE: number;
-  LEASED: number;
-  QUARANTINE: number;
-  CLEANUP: number;
-}
-```
-
-**Components:**
-- `AccountsPieChart` → Pie chart visualization
-- `AccountsSummaryTable` → Breakdown table
-- `NoAccounts` → Empty state
-- `AccountsLoading` → Loading skeleton
-
-**3. ThresholdSettings**
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/components/ThresholdSettings/index.tsx`
-
-**Purpose:** Configure budget/duration thresholds in templates
-
-**Features:**
-- Add/remove thresholds dynamically
-- Validation (ascending order, 0-100%)
-- Drag-and-drop reordering (optional)
-
----
-
-## Routing & Navigation
-
-### React Router Configuration
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/App.tsx`
-
-```tsx
-const routes = [
-  { path: "/", Element: Home },
-  { path: "/request", Element: RequestLease },
-  { path: "/assign", Element: AssignLease },              // Managers+
-  { path: "/settings", Element: Settings },               // Admins only
-  { path: "/lease_templates", Element: ListLeaseTemplates },
-  { path: "/lease_templates/new", Element: AddLeaseTemplate }, // Admins only
-  { path: "/lease_templates/edit/:uuid", Element: UpdateLeaseTemplate }, // Admins only
-  { path: "/accounts", Element: ListAccounts },           // Admins only
-  { path: "/accounts/new", Element: AddAccounts },        // Admins only
-  { path: "/approvals", Element: ListApprovals },         // Managers+
-  { path: "/approvals/:leaseId", Element: ApprovalDetails }, // Managers+
-  { path: "/leases", Element: ListLeases },
-  { path: "/leases/edit/:leaseId", Element: UpdateLease },
-];
-```
-
-### Navigation Menu
-
-**File:** `/Users/cns/httpdocs/cddo/ndx-try-arch/repos/innovation-sandbox-on-aws/source/frontend/src/components/AppLayout/constants.tsx`
-
-```typescript
-export const navigationItems = [
-  { type: "link", text: "Home", href: "/" },
-  { type: "link", text: "Request Lease", href: "/request" },
-  { type: "link", text: "My Leases", href: "/leases" },
-  {
-    type: "section",
-    text: "Management",
-    items: [
-      { type: "link", text: "Approvals", href: "/approvals", roles: ['Manager', 'Admin'] },
-      { type: "link", text: "Assign Lease", href: "/assign", roles: ['Manager', 'Admin'] },
-      { type: "link", text: "Lease Templates", href: "/lease_templates", roles: ['Admin'] },
-      { type: "link", text: "Account Pool", href: "/accounts", roles: ['Admin'] },
-      { type: "link", text: "Settings", href: "/settings", roles: ['Admin'] },
-    ],
-  },
-  { type: "divider" },
-  { type: "link", text: "Help", href: "/help", external: true },
-];
-```
-
-**Role-Based Filtering:**
-```tsx
-const filteredNav = navigationItems.filter(item => {
-  if (item.roles) {
-    return item.roles.some(role => user.roles.includes(role));
-  }
-  return true;
-});
-```
-
----
-
-## Monitoring & Error Handling
-
-### Error Boundaries
-
-```tsx
-class ErrorBoundary extends React.Component {
-  state = { hasError: false };
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('React Error:', error, errorInfo);
-    // Send to monitoring service (e.g., Sentry)
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return <ErrorPanel message="Something went wrong. Please refresh the page." />;
-    }
-    return this.props.children;
-  }
-}
-```
-
-### Toast Notifications
-
-**Library:** `react-toastify` v11.0.2
-
-**Usage:**
-```tsx
-import { toast } from 'react-toastify';
-
-// Success
-toast.success('Lease created successfully!');
-
-// Error
-toast.error('Failed to create lease. Please try again.');
-
-// Warning
-toast.warn('Budget threshold exceeded (75%)');
-
-// Info
-toast.info('Lease expires in 4 hours');
-```
-
-### API Error Handling
-
-```tsx
-try {
-  await leaseService.createLease(payload);
-  toast.success('Lease created!');
-  navigate('/leases');
-} catch (error) {
-  if (error.response?.status === 400) {
-    toast.error(`Validation error: ${error.response.data.message}`);
-  } else if (error.response?.status === 403) {
-    toast.error('You do not have permission to create leases');
-  } else if (error.response?.status === 409) {
-    toast.error('No accounts available. Please try again later.');
-  } else {
-    toast.error('Failed to create lease. Please try again.');
-  }
-  console.error('Create lease error:', error);
-}
-```
-
----
-
-## Performance Optimizations
-
-### Code Splitting
-
-```tsx
-// Lazy load heavy components
-const Settings = lazy(() => import('./domains/settings/pages/Settings'));
-const AddLeaseTemplate = lazy(() => import('./domains/leaseTemplates/pages/AddLeaseTemplate'));
-
-// Wrap in Suspense
-<Suspense fallback={<FullPageLoader />}>
-  <Routes>
-    <Route path="/settings" element={<Settings />} />
-    <Route path="/lease_templates/new" element={<AddLeaseTemplate />} />
-  </Routes>
-</Suspense>
-```
-
-### Memoization
-
-```tsx
-import { memo, useMemo } from 'react';
-
-// Memoize expensive computations
-const LeaseTable = memo(({ leases }) => {
-  const sortedLeases = useMemo(() => {
-    return leases.sort((a, b) => b.createdAt - a.createdAt);
-  }, [leases]);
-
-  return <Table items={sortedLeases} />;
-});
-```
-
-### Virtual Scrolling
-
-For large tables (>500 rows), consider `react-window`:
-
-```tsx
-import { FixedSizeList } from 'react-window';
-
-<FixedSizeList
-  height={600}
-  itemCount={leases.length}
-  itemSize={50}
->
-  {({ index, style }) => (
-    <div style={style}>
-      <LeaseRow lease={leases[index]} />
-    </div>
-  )}
-</FixedSizeList>
-```
-
----
-
-## Security Considerations
-
-### Content Security Policy (CSP)
-
-CloudFront response headers:
-
-```
-Content-Security-Policy:
-  default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval';
-  style-src 'self' 'unsafe-inline';
-  img-src 'self' data: https:;
-  font-src 'self' data:;
-  connect-src 'self' https://*.execute-api.us-west-2.amazonaws.com;
-```
-
-### XSS Protection
-
-- All user input sanitized via React's default escaping
-- Markdown rendering uses `react-markdown` with strict settings
-- No `dangerouslySetInnerHTML` usage
-
-### CSRF Protection
-
-- SameSite cookies for session management
-- JWT tokens stored in localStorage (not cookies)
-- API requests include CORS headers
+**Source**: `source/frontend/package.json`
 
 ---
 
 ## Related Documentation
 
-- [10-isb-core-architecture.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/10-isb-core-architecture.md) - Backend API architecture
-- [11-lease-lifecycle.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/11-lease-lifecycle.md) - Lease state machine
-- [20-approver-system.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/20-approver-system.md) - Approval workflow integration
-- [01-upstream-analysis.md](/Users/cns/httpdocs/cddo/ndx-try-arch/docs/01-upstream-analysis.md) - Upstream solution comparison
+- [10-isb-core-architecture.md](./10-isb-core-architecture.md) -- Backend API and Lambda architecture
+- [11-lease-lifecycle.md](./11-lease-lifecycle.md) -- Lease state machine that the UI drives
+- [13-isb-customizations.md](./13-isb-customizations.md) -- CDDO customizations including UI considerations
+- [60-auth-architecture.md](./60-auth-architecture.md) -- Full authentication architecture
 
 ---
-
-**Document Version:** 1.0
-**Last Updated:** 2026-02-03
-**Status:** Production System
+*Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*
