@@ -1,7 +1,7 @@
 {
   "$schema": "manifest.schema.json",
   "version": "2.0",
-  "generatedAt": "2026-03-02",
+  "generatedAt": "2026-03-06",
   "generatedBy": "update.prompt",
   "documents": {
     "00-index.md": {
@@ -284,12 +284,32 @@
       "dependsOn": [
         "10-isb-core-architecture.md"
       ],
-      "lastGenerated": null,
-      "checksum": null,
-      "wordCount": null,
-      "diagramCount": null,
+      "lastGenerated": "2026-03-06",
+      "checksum": "af98d4b",
+      "wordCount": 1300,
+      "diagramCount": 2,
       "quality": {
-        "score": null,
+        "score": 9,
+        "issues": []
+      }
+    },
+    "25-ou-metrics.md": {
+      "title": "OU Account Metrics (Stop-Gap)",
+      "category": "isb-satellites",
+      "sources": [
+        "github:co-cddo/innovation-sandbox-on-aws-ou-metrics",
+        "github:co-cddo/ndx-try-aws-scp"
+      ],
+      "dependsOn": [
+        "02-aws-organization.md",
+        "41-terraform-scp.md"
+      ],
+      "lastGenerated": "2026-03-06",
+      "checksum": "ae49b62",
+      "wordCount": 800,
+      "diagramCount": 2,
+      "quality": {
+        "score": 9,
         "issues": []
       }
     },

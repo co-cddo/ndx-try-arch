@@ -1,8 +1,8 @@
 # Service Control Policies
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [AWS Organizations API](https://console.aws.amazon.com/organizations/) via `.state/discovered-scps.json` and `.state/scps/*.json`, [ndx-try-aws-scp](https://github.com/co-cddo/ndx-try-aws-scp)
-> **Captured SHA**: `912db2e` (ndx-try-aws-scp), `6d70ae3` (ndx-try-aws-lza)
+> **Captured SHA**: `3443cac` (ndx-try-aws-scp), `6d70ae3` (ndx-try-aws-lza)
 
 ## Executive Summary
 

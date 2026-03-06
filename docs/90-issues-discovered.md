@@ -1,11 +1,11 @@
 # Issues Discovered
 
-> **Last Updated**: 2026-03-02
-> **Sources**: All 12 repositories, .state/upstream-status.json, .state/discovered-accounts.json, .state/org-ous.json, .state/discovered-scps.json
+> **Last Updated**: 2026-03-06
+> **Sources**: All 14 repositories, .state/upstream-status.json, .state/discovered-accounts.json, .state/org-ous.json, .state/discovered-scps.json
 
 ## Executive Summary
 
-This document catalogs all issues, inconsistencies, security concerns, and improvement recommendations discovered during the comprehensive NDX:Try AWS architecture analysis. A total of 28 issues have been identified across 10 analysis phases, with 2 rated critical, 5 high, 12 medium, and 9 low severity. The most significant findings relate to the ISB fork being 10 commits behind upstream, mixed dependency versions creating compatibility risks, and the high quarantine rate for pool accounts.
+This document catalogs all issues, inconsistencies, security concerns, and improvement recommendations discovered during the comprehensive NDX:Try AWS architecture analysis. A total of 30 issues have been identified across 10 analysis phases, with 2 rated critical, 6 high, 12 medium, and 10 low severity. The most significant findings relate to the ISB fork being 12 commits behind upstream (now missing v1.2.0 and v1.2.1 feature releases), the high quarantine rate for pool accounts (46 of 240 accounts, 19%), and mixed dependency versions creating compatibility risks.
 
 ---
 

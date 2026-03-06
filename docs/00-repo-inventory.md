@@ -1,12 +1,12 @@
 # Repository Inventory
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [co-cddo GitHub Organisation](https://github.com/co-cddo)
-> **Total Repositories**: 13
+> **Total Repositories**: 14
 
 ## Executive Summary
 
-The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 repositories under the `co-cddo` GitHub organisation. These repositories collectively implement a multi-account AWS sandbox platform for UK local government experimentation, comprising a forked upstream AWS Solution, custom satellite Lambda services, a Terraform-managed cost defence layer, Landing Zone Accelerator configuration, scenario content platforms, and supporting utilities.
+The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 14 repositories under the `co-cddo` GitHub organisation. These repositories collectively implement a multi-account AWS sandbox platform for UK local government experimentation, comprising a forked upstream AWS Solution, custom satellite Lambda services, an OU metrics stop-gap service, a Terraform-managed cost defence layer, Landing Zone Accelerator configuration, scenario content platforms, and supporting utilities.
 
 ---
 
@@ -15,18 +15,19 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 | Repository | Language | IaC | Archived | Last Push | Role |
 |---|---|---|---|---|---|
 | innovation-sandbox-on-aws | TypeScript | CDK + CFN | No | 2026-02-28 | Core ISB platform (fork) |
-| innovation-sandbox-on-aws-approver | TypeScript | CDK | No | 2026-03-02 | Lease approval scoring |
-| innovation-sandbox-on-aws-billing-seperator | TypeScript | CDK | No | 2026-03-02 | 72h billing cooldown |
-| innovation-sandbox-on-aws-client | TypeScript | -- | No | 2026-02-28 | ISB API client library |
-| innovation-sandbox-on-aws-costs | TypeScript | CDK | No | 2026-03-02 | Lease cost collection |
+| innovation-sandbox-on-aws-approver | TypeScript | CDK | No | 2026-03-06 | Lease approval scoring |
+| innovation-sandbox-on-aws-billing-seperator | TypeScript | CDK | No | 2026-03-03 | 72h billing cooldown |
+| innovation-sandbox-on-aws-client | TypeScript | -- | No | 2026-03-06 | ISB API client library |
+| innovation-sandbox-on-aws-costs | TypeScript | CDK | No | 2026-03-03 | Lease cost collection |
 | innovation-sandbox-on-aws-deployer | TypeScript | CDK | **Yes** | 2026-02-28 | Scenario deployer (archived) |
-| innovation-sandbox-on-aws-utils | Python | Scripts | No | 2026-03-02 | Pool account tooling |
-| ndx | TypeScript | CDK + Eleventy | No | 2026-03-02 | NDX public website |
-| ndx_try_aws_scenarios | TypeScript | CFN + Eleventy | No | 2026-03-02 | Scenario microsite + CFN |
+| innovation-sandbox-on-aws-ou-metrics | TypeScript | CDK | No | 2026-03-04 | OU account count metrics (stop-gap) |
+| innovation-sandbox-on-aws-utils | Python | Scripts | No | 2026-03-03 | Pool account tooling |
+| ndx | TypeScript | CDK + Eleventy | No | 2026-03-06 | NDX public website |
+| ndx_try_aws_scenarios | TypeScript | CFN + Eleventy | No | 2026-03-06 | Scenario microsite + CFN |
 | ndx-try-aws-isb | -- | -- | No | 2025-11-21 | Placeholder (empty) |
 | ndx-try-aws-lza | YAML | LZA | No | 2025-12-19 | Landing Zone config |
-| ndx-try-aws-scp | Terraform | Terraform | No | 2026-03-02 | Cost defence SCPs + budgets |
-| ndx-try-aws-terraform | Terraform | Terraform | No | 2026-02-28 | Org-level Terraform glue |
+| ndx-try-aws-scp | Terraform | Terraform | No | 2026-03-06 | Cost defence SCPs + budgets + OU alarms |
+| ndx-try-aws-terraform | Terraform | Terraform | No | 2026-03-03 | Org-level Terraform glue |
 
 ---
 
@@ -53,13 +54,13 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 | Property | Value |
 |---|---|
-| **SHA** | `be062e7` |
-| **Description** | Score-based lease approval system using a 19-rule scoring engine |
+| **SHA** | `cb27fa3` |
+| **Description** | Score-based lease approval system with Identity Center pre-approval |
 | **Language** | TypeScript |
 | **IaC** | AWS CDK (`cdk/`) |
 | **Workflows** | `deploy.yml` |
 
-**Purpose**: Listens for `LeaseRequested` EventBridge events and automatically approves or escalates lease requests. Implements domain verification for UK local government email addresses, AI-powered email analysis via Amazon Bedrock (Nova Micro), and Slack Workflow notifications for manual escalation. Targets 80%+ instant approval with less than 5% false negative rate.
+**Purpose**: Listens for `LeaseRequested` EventBridge events and automatically approves or escalates lease requests. Implements Identity Center group-based pre-approval (replacing hardcoded allow-lists), domain verification for UK local government email addresses, AI-powered email analysis via Amazon Bedrock (Nova Micro), and Slack Workflow notifications for manual escalation. Targets 80%+ instant approval with less than 5% false negative rate.
 
 **Key Files**: `src/` (Lambda handler), `cdk/` (CDK stack), `docs/runbooks/` (operational procedures).
 
@@ -69,7 +70,7 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 | Property | Value |
 |---|---|
-| **SHA** | `f8f1bdc` |
+| **SHA** | `47ae71d` |
 | **Description** | Quarantines sandbox accounts for 72 hours after cleanup to ensure billing separation |
 | **Language** | TypeScript |
 | **IaC** | AWS CDK (`lib/hub-stack.ts`, `lib/org-mgmt-stack.ts`) |
@@ -83,7 +84,7 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 | Property | Value |
 |---|---|
-| **SHA** | `7250ce7` |
+| **SHA** | `365668c` |
 | **Description** | Lightweight HTTP client for the ISB API |
 | **Language** | TypeScript |
 | **IaC** | None (library package) |
@@ -97,7 +98,7 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 | Property | Value |
 |---|---|
-| **SHA** | `cf659bb` |
+| **SHA** | `c8f0523` |
 | **Description** | Event-driven lease cost collection service |
 | **Language** | TypeScript |
 | **IaC** | CDK (`infra/`) |
@@ -124,25 +125,41 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 ---
 
-### 7. innovation-sandbox-on-aws-utils
+### 7. innovation-sandbox-on-aws-ou-metrics
 
 | Property | Value |
 |---|---|
-| **SHA** | `aa7e781` |
+| **SHA** | `ae49b62` |
+| **Description** | Stop-gap CloudWatch metrics for ISB OU account counts |
+| **Language** | TypeScript |
+| **IaC** | AWS CDK |
+| **Workflows** | None |
+
+**Purpose**: Publishes CloudWatch custom metrics under the `InnovationSandbox/OUMetrics` namespace for account counts across all 7 ISB pool OUs (Available, Active, Frozen, CleanUp, Quarantine, Entry, Exit). Lambda runs in the org management account, triggered by EventBridge (CloudTrail account moves, native Org events, 15-minute schedule). Stop-gap until upstream issue [#110](https://github.com/aws-solutions/innovation-sandbox-on-aws/issues/110) adds native support.
+
+**Key Files**: `lambda/handler.ts` (count & publish logic), `lib/ou-metrics-stack.ts` (CDK stack), `cdk.json` (OU ID configuration).
+
+---
+
+### 8. innovation-sandbox-on-aws-utils
+
+| Property | Value |
+|---|---|
+| **SHA** | `af98d4b` |
 | **Description** | Python utilities for managing Innovation Sandbox pool accounts |
 | **Language** | Python |
 | **IaC** | None (scripts) |
 | **Workflows** | CI workflow |
 
-**Purpose**: Operational scripts for pool account lifecycle: `create_sandbox_pool_account.py` (sequential account creation via AWS Organizations), `assign_lease.py`, `terminate_lease.py`, `force_release_account.py`, `create_user.py`, `clean_console_state.py`. Uses boto3 with SSO profiles.
+**Purpose**: Operational scripts for pool account lifecycle: `create_sandbox_pool_account.py` (batch account creation with configurable count), `assign_lease.py` (enhanced with optional template/duration), `terminate_lease.py`, `force_release_account.py`, `create_user.py`, `clean_console_state.py`. Uses boto3 with SSO profiles.
 
 ---
 
-### 8. ndx
+### 9. ndx
 
 | Property | Value |
 |---|---|
-| **SHA** | `a5bf368` |
+| **SHA** | `b846188` |
 | **Description** | National Digital Exchange public website |
 | **Language** | TypeScript / Eleventy v3.x |
 | **IaC** | CDK (`infra/`) |
@@ -154,11 +171,11 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 ---
 
-### 9. ndx_try_aws_scenarios
+### 10. ndx_try_aws_scenarios
 
 | Property | Value |
 |---|---|
-| **SHA** | `fcb5c08` |
+| **SHA** | `27b3a06` |
 | **Description** | Zero-cost AWS evaluation platform for UK local government |
 | **Language** | TypeScript / Eleventy |
 | **IaC** | CloudFormation (275+ templates in `cloudformation/scenarios/`) |
@@ -168,7 +185,7 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 ---
 
-### 10. ndx-try-aws-isb
+### 11. ndx-try-aws-isb
 
 | Property | Value |
 |---|---|
@@ -178,7 +195,7 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 ---
 
-### 11. ndx-try-aws-lza
+### 12. ndx-try-aws-lza
 
 | Property | Value |
 |---|---|
@@ -194,27 +211,27 @@ The NDX (National Digital Exchange) Innovation Sandbox ecosystem spans 13 reposi
 
 ---
 
-### 12. ndx-try-aws-scp
+### 13. ndx-try-aws-scp
 
 | Property | Value |
 |---|---|
-| **SHA** | `912db2e` |
-| **Description** | 5-layer cost defence system for Innovation Sandbox |
+| **SHA** | `3443cac` |
+| **Description** | 5-layer cost defence system for Innovation Sandbox + OU metrics alarms |
 | **Language** | Terraform + Python (Lambda) |
 | **IaC** | Terraform |
 | **Workflows** | `terraform.yaml` |
 
-**Purpose**: Implements defence-in-depth cost protection: SCPs (service/compute restrictions), AWS Budgets (per-account daily/monthly limits), DynamoDB billing mode enforcement (auto-delete On-Demand tables). Three Terraform modules: `scp-manager`, `budgets-manager`, `dynamodb-billing-enforcer`.
+**Purpose**: Implements defence-in-depth cost protection: SCPs (service/compute restrictions), AWS Budgets (per-account daily/monthly limits), DynamoDB billing mode enforcement (auto-delete On-Demand tables), and OU account count alarm management. Four Terraform modules: `scp-manager`, `budgets-manager`, `dynamodb-billing-enforcer`, `ou-metrics-alarms`.
 
-**Key Files**: `environments/ndx-production/main.tf`, `modules/scp-manager/`, `modules/budgets-manager/`, `modules/dynamodb-billing-enforcer/`.
+**Key Files**: `environments/ndx-production/main.tf`, `modules/scp-manager/`, `modules/budgets-manager/`, `modules/dynamodb-billing-enforcer/`, `modules/ou-metrics-alarms/`.
 
 ---
 
-### 13. ndx-try-aws-terraform
+### 14. ndx-try-aws-terraform
 
 | Property | Value |
 |---|---|
-| **SHA** | `3a1ed1b` |
+| **SHA** | `4df9750` |
 | **Description** | General Terraform configuration for org-level resources |
 | **Language** | Terraform |
 | **IaC** | Terraform |
@@ -237,21 +254,25 @@ flowchart TB
     end
 
     subgraph satellites["ISB Satellite Services"]
-        CLIENT["innovation-sandbox-on-aws-client<br/><i>API Client Library</i><br/>SHA: 7250ce7"]
-        APPROVER["innovation-sandbox-on-aws-approver<br/><i>Lease Approval</i><br/>SHA: be062e7"]
-        BILLING["innovation-sandbox-on-aws-billing-seperator<br/><i>72h Cooldown</i><br/>SHA: f8f1bdc"]
-        COSTS["innovation-sandbox-on-aws-costs<br/><i>Cost Collection</i><br/>SHA: cf659bb"]
+        CLIENT["innovation-sandbox-on-aws-client<br/><i>API Client Library</i><br/>SHA: 365668c"]
+        APPROVER["innovation-sandbox-on-aws-approver<br/><i>Lease Approval</i><br/>SHA: cb27fa3"]
+        BILLING["innovation-sandbox-on-aws-billing-seperator<br/><i>72h Cooldown</i><br/>SHA: 47ae71d"]
+        COSTS["innovation-sandbox-on-aws-costs<br/><i>Cost Collection</i><br/>SHA: c8f0523"]
         DEPLOYER["innovation-sandbox-on-aws-deployer<br/><i>ARCHIVED</i><br/>SHA: c2a85a0"]
-        UTILS["innovation-sandbox-on-aws-utils<br/><i>Python Scripts</i><br/>SHA: aa7e781"]
+        UTILS["innovation-sandbox-on-aws-utils<br/><i>Python Scripts</i><br/>SHA: af98d4b"]
+    end
+
+    subgraph observability["Observability"]
+        OUMETRICS["innovation-sandbox-on-aws-ou-metrics<br/><i>OU CloudWatch Metrics</i><br/>SHA: ae49b62"]
     end
 
     subgraph content["Content Platforms"]
-        NDX["ndx<br/><i>NDX Website</i><br/>SHA: a5bf368"]
-        SCENARIOS["ndx_try_aws_scenarios<br/><i>7 AWS Scenarios</i><br/>SHA: fcb5c08"]
+        NDX["ndx<br/><i>NDX Website</i><br/>SHA: b846188"]
+        SCENARIOS["ndx_try_aws_scenarios<br/><i>AWS Scenarios</i><br/>SHA: 27b3a06"]
     end
 
-    subgraph costdefence["Cost Defence"]
-        SCP["ndx-try-aws-scp<br/><i>SCPs + Budgets</i><br/>SHA: 912db2e"]
+    subgraph costdefence["Cost Defence + Alarms"]
+        SCP["ndx-try-aws-scp<br/><i>SCPs + Budgets + Alarms</i><br/>SHA: 3443cac"]
     end
 
     subgraph legacy["Placeholder"]
@@ -269,6 +290,8 @@ flowchart TB
     LZA -->|defines OUs for| ISB
     LZA -->|manages SCPs alongside| SCP
     SCP -->|Terraform SCPs on| ISB
+    SCP -->|alarms consume| OUMETRICS
+    OUMETRICS -->|monitors OUs in| ISB
     NDX -.->|links to| SCENARIOS
     UTILS -.->|manages pool accounts in| ISB
 ```
@@ -279,7 +302,7 @@ flowchart TB
 
 | Technology | Count | Repositories |
 |---|---|---|
-| TypeScript CDK | 6 | ISB core, approver, billing-separator, costs, deployer, ndx |
+| TypeScript CDK | 7 | ISB core, approver, billing-separator, costs, deployer, ou-metrics, ndx |
 | CloudFormation | 2 | ISB core, ndx_try_aws_scenarios |
 | Terraform | 2 | ndx-try-aws-scp, ndx-try-aws-terraform |
 | AWS LZA (YAML) | 1 | ndx-try-aws-lza |
@@ -307,8 +330,10 @@ flowchart TB
 
 5. **Archived Repository**: `innovation-sandbox-on-aws-deployer` is archived (superseded by ISB blueprint pattern).
 
-6. **Scale**: 110 pool accounts (pool-001 to pool-121, with gaps) across 117 total AWS accounts.
+6. **Scale**: 240 pool accounts across 247 total AWS accounts, with OU-based lifecycle management and CloudWatch metrics for operational visibility.
+
+7. **Observability**: The `innovation-sandbox-on-aws-ou-metrics` stop-gap service provides CloudWatch metrics for account pool health, consumed by Terraform-managed alarms in `ndx-try-aws-scp`.
 
 ---
 
-*Generated from source analysis on 2026-03-02. See [01-upstream-analysis.md](./01-upstream-analysis.md) for fork divergence details.*
+*Generated from source analysis on 2026-03-06. See [01-upstream-analysis.md](./01-upstream-analysis.md) for fork divergence details.*

@@ -1,6 +1,6 @@
 # OIDC Configuration
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Sources**: Workflow files across all repositories, `ndx-try-aws-scp/docs/GITHUB_ACTIONS_SETUP.md`, `innovation-sandbox-on-aws-billing-seperator/.github/workflows/deploy.yml`
 
 ## Executive Summary

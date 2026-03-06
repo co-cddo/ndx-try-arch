@@ -1,8 +1,8 @@
 # Billing Separator
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [innovation-sandbox-on-aws-billing-seperator](https://github.com/co-cddo/innovation-sandbox-on-aws-billing-seperator)
-> **Captured SHA**: `f8f1bdc`
+> **Captured SHA**: `47ae71d`
 
 ## Executive Summary
 

@@ -1,6 +1,6 @@
 # Encryption
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Sources**: `innovation-sandbox-on-aws` (kms.ts, isb-data-resources.ts, cloudfront-ui-api.ts, auth-api.ts, rest-api-all.ts), `innovation-sandbox-on-aws-costs`, `ndx-try-aws-lza` (security-config.yaml)
 
 ## Executive Summary

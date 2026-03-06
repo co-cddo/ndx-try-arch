@@ -1,12 +1,12 @@
 # Terraform SCP Management
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [https://github.com/co-cddo/ndx-try-aws-scp](https://github.com/co-cddo/ndx-try-aws-scp)
-> **Captured SHA**: `912db2e`
+> **Captured SHA**: `3443cac`
 
 ## Executive Summary
 
-The `ndx-try-aws-scp` repository implements a 3-layer defense-in-depth cost control system using Terraform modules to protect Innovation Sandbox 24-hour leases from cost abuse. The three layers are Service Control Policies (prevention), AWS Budgets with per-account isolation and service-specific tracking (detection), and a DynamoDB Billing Enforcer Lambda (auto-remediation). The system originated from a need to override and extend the default ISB SCPs to support NDX scenarios (Textract async operations, Bedrock cross-region inference) while simultaneously introducing comprehensive cost guardrails that the upstream ISB platform lacks.
+The `ndx-try-aws-scp` repository implements a 4-layer defense-in-depth cost control and observability system using Terraform modules to protect Innovation Sandbox leases from cost abuse and monitor pool health. The four layers are Service Control Policies (prevention), AWS Budgets with per-account isolation and service-specific tracking (detection), a DynamoDB Billing Enforcer Lambda (auto-remediation), and OU Metrics CloudWatch Alarms (observability). The system originated from a need to override and extend the default ISB SCPs to support NDX scenarios (Textract async operations, Bedrock cross-region inference) while simultaneously introducing comprehensive cost guardrails and operational monitoring that the upstream ISB platform lacks.
 
 ## Design Context
 
@@ -200,6 +200,34 @@ flowchart LR
 
 ---
 
+## Module: ou-metrics-alarms
+
+**Location**: `modules/ou-metrics-alarms/`
+
+This module consumes CloudWatch custom metrics published by the [OU metrics stop-gap service](./25-ou-metrics.md) (`innovation-sandbox-on-aws-ou-metrics`) and creates CloudWatch alarms for pool health monitoring. Metrics are published to the `InnovationSandbox/OUMetrics` namespace.
+
+### Alarms Created
+
+| Alarm | Metric | Condition | Rationale |
+|-------|--------|-----------|-----------|
+| Low Available Accounts | `AvailableAccounts` | `< threshold` for 1 datapoint | Pool running low, users may not get a sandbox |
+| Stuck Entry Accounts | `EntryAccounts` | `> 0` for 4 datapoints (~1 hour) | Accounts stuck transitioning into the pool |
+| Stuck Exit Accounts | `ExitAccounts` | `> 0` for 4 datapoints (~1 hour) | Accounts stuck transitioning out of the pool |
+| Metrics Stale | `TotalManagedAccounts` | `INSUFFICIENT_DATA` for ~30 min | Lambda may be failing (uses `treat_missing_data = breaching`) |
+
+All alarms send notifications to the configured SNS topic. The `metrics_stale` alarm uses `treat_missing_data = "breaching"` so that `INSUFFICIENT_DATA` triggers the alarm, catching Lambda failures.
+
+### Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `namespace` | Alarm name prefix | required |
+| `sns_topic_arn` | SNS topic for alarm notifications | required |
+| `available_accounts_threshold` | Low available accounts threshold | `10` |
+| `metric_period_seconds` | Metric evaluation period | `900` (15 min) |
+
+---
+
 ## Deployment
 
 ### State Management
@@ -341,6 +369,7 @@ Additional documentation in `docs/`:
 
 - [05-service-control-policies.md](05-service-control-policies.md) - Comprehensive SCP analysis across all repos
 - [40-lza-configuration.md](40-lza-configuration.md) - LZA configuration and LZA-managed SCPs
+- [25-ou-metrics.md](25-ou-metrics.md) - OU account metrics stop-gap service (metrics source)
 - [42-terraform-resources.md](42-terraform-resources.md) - Organization-level Terraform resources
 - [00-repo-inventory.md](00-repo-inventory.md) - Repository overview
 
@@ -367,6 +396,9 @@ Additional documentation in `docs/`:
 | `repos/ndx-try-aws-scp/docs/EVENTBRIDGE_EVENTS.md` | Event schemas |
 | `repos/ndx-try-aws-scp/docs/GITHUB_ACTIONS_SETUP.md` | CI/CD setup |
 | `repos/ndx-try-aws-scp/docs/SCP_CONSOLIDATION_ANALYSIS.md` | SCP analysis |
+| `repos/ndx-try-aws-scp/modules/ou-metrics-alarms/main.tf` | OU metrics alarm definitions |
+| `repos/ndx-try-aws-scp/modules/ou-metrics-alarms/variables.tf` | Alarm configuration variables |
+| `repos/ndx-try-aws-scp/modules/ou-metrics-alarms/outputs.tf` | Alarm ARN outputs |
 
 ---
 *Generated from source analysis. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

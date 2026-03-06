@@ -1,8 +1,8 @@
 # Terraform Resources (Organization Management)
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [https://github.com/co-cddo/ndx-try-aws-terraform](https://github.com/co-cddo/ndx-try-aws-terraform)
-> **Captured SHA**: `3a1ed1b`
+> **Captured SHA**: `4df9750`
 
 ## Executive Summary
 

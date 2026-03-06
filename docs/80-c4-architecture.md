@@ -1,7 +1,7 @@
 # C4 Architecture
 
-> **Last Updated**: 2026-03-02
-> **Sources**: All 12 repositories, .state/discovered-accounts.json, .state/org-ous.json, .state/discovered-scps.json
+> **Last Updated**: 2026-03-06
+> **Sources**: All 14 repositories, .state/discovered-accounts.json, .state/org-ous.json, .state/discovered-scps.json
 
 ## Executive Summary
 

@@ -1,6 +1,6 @@
 # Secrets Management
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Sources**: `innovation-sandbox-on-aws` (auth-api.ts, secret-rotator-handler.ts, sso-handler/config.ts), `innovation-sandbox-on-aws-costs`, `innovation-sandbox-on-aws-billing-seperator`, `innovation-sandbox-on-aws-deployer`, `ndx`, `ndx-try-aws-scp`, GitHub Actions workflow files
 
 ## Executive Summary

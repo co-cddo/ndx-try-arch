@@ -17,6 +17,8 @@
     "repo:ndx-terraform-scp": { "type": "source", "category": "repository" },
     "repo:ndx-terraform": { "type": "source", "category": "repository" },
     "repo:ndx-try-aws-isb": { "type": "source", "category": "repository" },
+    "repo:isb-client": { "type": "source", "category": "repository" },
+    "repo:isb-ou-metrics": { "type": "source", "category": "repository" },
 
     "aws:organization": { "type": "source", "category": "aws-org" },
     "aws:scps": { "type": "source", "category": "aws-policy" },
@@ -58,6 +60,7 @@
     "doc:80-c4-architecture.md": { "type": "document", "category": "architecture" },
     "doc:81-aws-architecture.md": { "type": "document", "category": "architecture" },
     "doc:82-process-flows.md": { "type": "document", "category": "architecture" },
+    "doc:25-ou-metrics.md": { "type": "document", "category": "isb-satellites" },
     "doc:90-issues-discovered.md": { "type": "document", "category": "meta" }
   },
 
@@ -82,6 +85,9 @@
     { "from": "repo:ndx-terraform-scp", "to": "doc:41-terraform-scp.md", "relation": "documents" },
     { "from": "repo:ndx-terraform", "to": "doc:42-terraform-resources.md", "relation": "documents" },
     { "from": "repo:ndx-try-aws-isb", "to": "doc:43-ndx-try-aws-isb.md", "relation": "documents" },
+
+    { "from": "repo:isb-ou-metrics", "to": "doc:25-ou-metrics.md", "relation": "documents" },
+    { "from": "repo:ndx-terraform-scp", "to": "doc:25-ou-metrics.md", "relation": "references" },
 
     { "from": "aws:organization", "to": "doc:02-aws-organization.md", "relation": "documents" },
     { "from": "aws:organization", "to": "doc:03-hub-account-resources.md", "relation": "documents" },
