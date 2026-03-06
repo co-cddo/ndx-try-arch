@@ -1,6 +1,6 @@
 # ISB CDDO Customizations
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [co-cddo/innovation-sandbox-on-aws](https://github.com/co-cddo/innovation-sandbox-on-aws)
 > **Captured SHA**: `cf75b87`
 
@@ -11,8 +11,8 @@ The UK Government's Central Digital and Data Office (CDDO) operates a fork of th
 **Key findings:**
 
 - **Zero core code divergence** -- the fork at SHA `cf75b87` has no changes to upstream source code
-- **Six satellite services** -- Approver, Billing Separator, Costs, Deployer, Client library, and Utils scripts
-- **Six releases behind upstream** -- v1.1.4 vs v1.2.0 (10 upstream commits, 451 files changed)
+- **Seven satellite services** -- Approver, Billing Separator, Costs, Deployer, Client library, OU Metrics, and Utils scripts
+- **Eight releases behind upstream** -- v1.1.4 vs v1.2.1 (12 upstream commits)
 - **Event-driven integration** -- satellites subscribe to and publish on the ISB EventBridge bus
 - **UK government adaptations** -- `@dsit.gov.uk` email domain, `ndx` namespace, `us-east-1`/`us-west-2` regions, Slack-based approval workflow, 91-day billing quarantine
 

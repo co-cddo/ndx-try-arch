@@ -1,12 +1,12 @@
 # AWS Organization Structure
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [AWS Organizations API](https://console.aws.amazon.com/organizations/) via `.state/discovered-accounts.json`, `.state/org-ous.json`, `.state/org-roots.json`
 > **Captured SHA**: N/A (live AWS state)
 
 ## Executive Summary
 
-The NDX:Try AWS infrastructure operates within a single AWS Organization (`o-4g8nrlnr9s`) managed by CDDO under the Department for Science, Innovation and Technology (DSIT). The organization contains 117 accounts (7 infrastructure + 110 sandbox pool), governed by AWS Control Tower and Landing Zone Accelerator v1.1.0. The OU hierarchy implements a standard landing zone pattern with a dedicated Innovation Sandbox OU containing a 7-stage account lifecycle pool.
+The NDX:Try AWS infrastructure operates within a single AWS Organization (`o-4g8nrlnr9s`) managed by CDDO under the Department for Science, Innovation and Technology (DSIT). The organization contains 247 accounts (7 infrastructure + 240 sandbox pool), governed by AWS Control Tower and Landing Zone Accelerator v1.1.0. The OU hierarchy implements a standard landing zone pattern with a dedicated Innovation Sandbox OU containing a 7-stage account lifecycle pool. Account pool health is monitored via CloudWatch custom metrics published by the [OU metrics stop-gap service](./25-ou-metrics.md).
 
 ---
 
@@ -19,9 +19,9 @@ The NDX:Try AWS infrastructure operates within a single AWS Organization (`o-4g8
 | Root ID | `r-2laj` |
 | Management Account | `955063685555` (gds-ndx-try-aws-org-management) |
 | Management Email | `ndx-try-provider+gds-ndx-try-aws@dsit.gov.uk` |
-| Total Accounts | **117** |
+| Total Accounts | **247** |
 | Infrastructure Accounts | 7 |
-| Pool Accounts | 110 |
+| Pool Accounts | 240 |
 
 ### Enabled Policy Types
 
@@ -78,7 +78,7 @@ flowchart TB
 
     subgraph pool_ou["ndx_InnovationSandboxAccountPool<br/>ou-2laj-4dyae1oa"]
         entry["Entry OU"]
-        available["Available OU<br/><i>110 pool accounts</i>"]
+        available["Available OU<br/><i>189 pool accounts</i>"]
         active["Active OU"]
         cleanup["CleanUp OU"]
         frozen["Frozen OU"]
@@ -105,18 +105,21 @@ flowchart TB
 
 ---
 
-## Pool Accounts (110 Total)
+## Pool Accounts (240 Total)
 
-The sandbox pool contains 110 accounts numbered from pool-001 to pool-121 (with gaps where numbers were skipped). All accounts follow the email pattern `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk`.
+The sandbox pool contains 240 accounts. All accounts follow the email pattern `ndx-try-provider+gds-ndx-try-aws-pool-NNN@dsit.gov.uk`.
 
-### Pool Account Distribution by Number Range
+### Pool Account Distribution by OU (Live State)
 
-| Range | Count | Sample Account IDs |
+| OU | Account Count | Status |
 |---|---|---|
-| pool-001 to pool-030 | 27 | 449788867583, 831494785845, 340601547583, ... |
-| pool-031 to pool-060 | 22 | 612812183319, 609665072531, 995631985080, ... |
-| pool-061 to pool-090 | 28 | 352246554840, 594862215936, 003789736367, ... |
-| pool-091 to pool-121 | 33 | 922231562337, 916340099025, 888449443958, ... |
+| Available | 189 | Ready to be leased |
+| Active | 3 | Currently leased to users |
+| Frozen | 0 | Budget/duration breach |
+| CleanUp | 0 | Resources being destroyed |
+| Quarantine | 46 | Cleanup failed / billing cooldown |
+| Entry | 0 | Being initialized |
+| Exit | 0 | Being removed |
 
 ### Account Lifecycle State Machine
 
@@ -176,14 +179,14 @@ stateDiagram-v2
 |---|---|---|
 | ndx_InnovationSandboxAccountPool | ou-2laj-4dyae1oa | 0 (parent only) |
 | Entry | ou-2laj-2by9v0sr | 0 |
-| Available | ou-2laj-oihxgbtr | 110 |
-| Active | ou-2laj-sre4rnjs | 0 |
+| Available | ou-2laj-oihxgbtr | 189 |
+| Active | ou-2laj-sre4rnjs | 3 |
 | CleanUp | ou-2laj-x3o8lbk8 | 0 |
 | Frozen | ou-2laj-jpffue7g | 0 |
-| Quarantine | ou-2laj-mmagoake | 0 |
+| Quarantine | ou-2laj-mmagoake | 46 |
 | Exit | ou-2laj-s1t02mrz | 0 |
 
-**Note on current state**: At the time of discovery (2026-03-02), all 110 pool accounts are in the Available OU with no active leases. This may indicate a maintenance window or low-usage period.
+**Note on current state**: At the time of discovery (2026-03-06), 3 accounts have active leases and 46 accounts are in Quarantine (likely from billing separation cooldown periods). The pool has grown significantly from 110 to 240 accounts since the initial capture, indicating increased provisioning for anticipated demand.
 
 ---
 
@@ -204,7 +207,7 @@ ndx-try-provider+gds-ndx-try-aws-<purpose>@dsit.gov.uk
 | perimeter | Perimeter |
 | shared-services | SharedServices |
 | isb-hub | InnovationSandboxHub |
-| pool-NNN | Pool accounts (001-121) |
+| pool-NNN | Pool accounts (001-240+) |
 
 ---
 
@@ -238,4 +241,4 @@ See [05-service-control-policies.md](./05-service-control-policies.md) for compl
 
 ---
 
-*Generated from AWS Organizations state captured 2026-03-02. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*
+*Generated from AWS Organizations state captured 2026-03-06. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

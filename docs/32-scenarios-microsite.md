@@ -1,8 +1,8 @@
 # Scenarios Microsite
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [https://github.com/co-cddo/ndx_try_aws_scenarios](https://github.com/co-cddo/ndx_try_aws_scenarios)
-> **Captured SHA**: `fcb5c08`
+> **Captured SHA**: `27b3a06`
 
 ## Executive Summary
 

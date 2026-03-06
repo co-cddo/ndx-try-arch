@@ -1,7 +1,7 @@
 # AWS Architecture
 
-> **Last Updated**: 2026-03-02
-> **Sources**: .state/discovered-accounts.json (117 accounts), .state/org-ous.json (10 OUs), .state/discovered-scps.json (19 SCPs), .state/upstream-status.json
+> **Last Updated**: 2026-03-06
+> **Sources**: .state/discovered-accounts.json (247 accounts), .state/org-ous.json (17 OUs), .state/discovered-scps.json (19 SCPs), .state/upstream-status.json
 
 ## Executive Summary
 

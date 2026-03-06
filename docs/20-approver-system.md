@@ -1,16 +1,16 @@
 # Approver System
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [innovation-sandbox-on-aws-approver](https://github.com/co-cddo/innovation-sandbox-on-aws-approver)
-> **Captured SHA**: `be062e7`
+> **Captured SHA**: `cb27fa3`
 
 ## Executive Summary
 
-The ISB Approver is an intelligent, event-driven lease approval service that transforms manual approval bottlenecks into an automated, score-based decision system for the Innovation Sandbox. It evaluates `LeaseRequested` events using a 19-rule scoring engine with configurable weights, AI-powered email analysis via Amazon Bedrock (Nova Micro), and UK government domain verification. The system targets instant approval for 80%+ of legitimate requests, while escalating higher-risk requests to operators via Slack with full score breakdowns and one-click approve/deny actions.
+The ISB Approver is an intelligent, event-driven lease approval service that transforms manual approval bottlenecks into an automated, score-based decision system for the Innovation Sandbox. It evaluates `LeaseRequested` events using a 19-rule scoring engine with configurable weights, AI-powered email analysis via Amazon Bedrock (Nova Micro), and UK government domain verification. Pre-approved users are identified via AWS Identity Center group membership through cross-account queries to the management account's Identity Store, replacing the previous hardcoded email allow-list. The system targets instant approval for 80%+ of legitimate requests, while escalating higher-risk requests to operators via Slack with full score breakdowns and one-click approve/deny actions.
 
 ## Architecture Overview
 
-The Approver operates as a single Lambda function subscribing to three event sources: `LeaseRequested` events and `AccountCleanupSucceeded` events from the ISB EventBridge bus, plus a 30-minute scheduled queue check. It implements an in-process state machine pattern (not AWS Step Functions) to orchestrate the decision flow, with SQS for out-of-hours delay queueing and DynamoDB for idempotency tracking and queue position management.
+The Approver operates as a single Lambda function subscribing to three event sources: `LeaseRequested` events and `AccountCleanupSucceeded` events from the ISB EventBridge bus, plus a 30-minute scheduled queue check. It implements an in-process state machine pattern (not AWS Step Functions) to orchestrate the decision flow, with SQS for out-of-hours delay queueing and DynamoDB for idempotency tracking and queue position management. Pre-approval checks use a cross-account STS role assumption to query the management account's AWS Identity Center Identity Store for group membership.
 
 ### Component Architecture
 
@@ -20,6 +20,12 @@ graph TB
         ISB_EB[ISB EventBridge Bus]
         ISB_DDB[ISB DynamoDB Tables<br/>Leases + Accounts]
         ISB_LAMBDA[ISB Leases Lambda]
+    end
+
+    subgraph "Management Account (955063685555)"
+        IC[AWS Identity Center<br/>Identity Store]
+        IC_ROLE[ApproverIdentityCenterReadRole<br/>identitystore:ListUsers<br/>identitystore:IsMemberInGroups]
+        IC_GROUP[ndx-IsbPreapprovedGroup]
     end
 
     subgraph "Approver Service"
@@ -42,6 +48,7 @@ graph TB
             RULES[19 Rules<br/>Penalty + Bonus]
             DOMAIN[Domain Verification<br/>ukps-domains S3]
             AI[Bedrock Nova Micro<br/>Email Analysis]
+            PREAPPROVE[Pre-Approval Check<br/>Identity Center Group]
         end
 
         SQS[SQS Delay Queue<br/>Out-of-Hours]
@@ -70,8 +77,12 @@ graph TB
     SM_SCORE --> RULES
     RULES --> DOMAIN
     RULES --> AI
+    RULES --> PREAPPROVE
     DOMAIN --> S3_DOMAINS
     AI -->|Circuit Breaker| LAMBDA
+    PREAPPROVE -->|STS AssumeRole| IC_ROLE
+    IC_ROLE --> IC
+    IC --> IC_GROUP
 
     SM_TIME -->|Out-of-Hours| SQS
     SQS --> SQS_DLQ
@@ -95,6 +106,7 @@ sequenceDiagram
     participant ISB as ISB EventBridge
     participant Lambda as Approver Lambda
     participant DDB as ISB DynamoDB
+    participant IC as Identity Center<br/>(Management Account)
     participant Bedrock as Amazon Bedrock
     participant S3 as S3 Domain List
     participant SQS as Delay Queue
@@ -109,6 +121,7 @@ sequenceDiagram
     Lambda->>DDB: Query Org Lease History
     Lambda->>S3: Check Domain Allowlist
     Lambda->>Bedrock: Analyze Email Pattern
+    Lambda->>IC: STS AssumeRole + Check Group Membership
 
     Lambda->>Lambda: TIMING_CHECK
 
@@ -126,7 +139,10 @@ sequenceDiagram
             Lambda->>Lambda: SCORING - Run 19 Rules
             Lambda->>Lambda: DECIDING - Score vs Threshold
 
-            alt Score < 20 (Low Risk)
+            alt Pre-approved Group Member
+                Lambda->>ISB_API: Approve Lease (Pre-approved Override)
+                Lambda->>ISB_API: Add Comment (Pre-approved)
+            else Score < 20 (Low Risk)
                 Lambda->>ISB_API: Approve Lease
                 Lambda->>ISB_API: Add Comment (Approved)
             else Score >= 20 (Elevated Risk)
@@ -136,6 +152,61 @@ sequenceDiagram
         end
     end
 ```
+
+## Identity Center Pre-Approval
+
+Pre-approved users bypass normal scoring thresholds via membership in the `ndx-IsbPreapprovedGroup` Identity Center group. This replaced a hardcoded email allow-list (`src/lib/allow-list.ts`, now deleted) with a dynamic, operationally-managed group in AWS Identity Center. The decision is documented in [ADR-001](https://github.com/co-cddo/innovation-sandbox-on-aws-approver/blob/main/docs/adr/001-identity-center-group-preapproval.md).
+
+**Source**: `src/services/identity-store.ts`, `docs/adr/001-identity-center-group-preapproval.md`
+
+### How It Works
+
+The Approver Lambda in the Hub account (568672915267) assumes a cross-account IAM role (`ApproverIdentityCenterReadRole`) in the management account (955063685555) via STS. Using the temporary credentials, it queries the Identity Store to find the user by email and check membership in the pre-approved group. The `allow_list_override` scoring rule applies a -100 bonus for pre-approved members, effectively guaranteeing approval since the escalation threshold is 20.
+
+### Pre-Approval Check Flow
+
+```mermaid
+sequenceDiagram
+    participant Lambda as Approver Lambda<br/>(Hub Account)
+    participant STS as AWS STS
+    participant IS as Identity Store<br/>(Management Account)
+
+    Lambda->>STS: AssumeRole(ApproverIdentityCenterReadRole)
+    STS-->>Lambda: Temporary Credentials (900s TTL)
+
+    Note over Lambda: Credentials cached, refreshed<br/>when <5 min remaining
+
+    Lambda->>IS: ListUsers(filter: email)
+    IS-->>Lambda: User ID (or empty)
+
+    alt User Not Found in Identity Center
+        Lambda-->>Lambda: isPreapproved = false
+    else User Found
+        Lambda->>IS: IsMemberInGroups(userId, groupId)
+        IS-->>Lambda: MembershipExists: true/false
+        Lambda-->>Lambda: isPreapproved = result
+    end
+
+    Note over Lambda: Fail-closed: any error<br/>returns isPreapproved = false
+```
+
+### Configuration
+
+| Environment Variable | Value | Purpose |
+|---------------------|-------|---------|
+| `IDENTITY_STORE_ID` | `d-9267e1e371` | Identity Store instance ID |
+| `IDENTITY_CENTER_ROLE_ARN` | Cross-account role ARN | Role in management account |
+| `IDENTITY_CENTER_GROUP_ID` | Group ID | `ndx-IsbPreapprovedGroup` group |
+
+### Resilience
+
+- **Fail-closed**: If the Identity Store is unreachable or STS role assumption fails, the user is NOT pre-approved. The request proceeds through normal scoring and may be escalated for manual review.
+- **Credential caching**: STS credentials are cached and refreshed when less than 5 minutes remain, avoiding redundant cross-account calls within a Lambda execution context.
+- **Latency**: Approximately 200ms for STS AssumeRole + ListUsers + IsMemberInGroups (with cached credentials, subsequent checks are faster).
+
+### Operational Management
+
+Pre-approved group membership is managed via the AWS Console or CLI -- no code changes or deployments required. See the [runbook](https://github.com/co-cddo/innovation-sandbox-on-aws-approver/blob/main/docs/runbooks/preapproved-group-management.md) for operational procedures. All changes to group membership are auditable via CloudTrail.
 
 ## Scoring Engine
 
@@ -166,7 +237,7 @@ The scoring engine evaluates 19 rules synchronously within a single Lambda invoc
 
 | Rule | Weight | Trigger |
 |------|--------|---------|
-| `allow_list_override` | -100 | User on operator allow-list |
+| `allow_list_override` | -100 | User in pre-approved Identity Center group (`ndx-IsbPreapprovedGroup`) |
 | `verified_gov_domain` | -5 | Domain in ukps-domains list |
 | `familiar_template` | -1 | Previously used template successfully |
 | `manual_early_termination` | -2 each | Responsible early termination |
@@ -190,7 +261,7 @@ The Approver deploys as a single CDK stack (`ApproverStack`) containing:
 
 | Resource | Purpose |
 |----------|---------|
-| **Approver Lambda** | Main decision engine (Node.js 20, TypeScript) |
+| **Approver Lambda** | Main decision engine (Node.js 20, TypeScript), with cross-account STS AssumeRole for Identity Center |
 | **Slack Approve Lambda** | Handles Slack approve button clicks |
 | **Slack Deny Lambda** | Handles Slack deny button clicks |
 | **DynamoDB: ApproverIdempotency** | Lambda Powertools idempotency (TTL-based) |
@@ -211,7 +282,14 @@ The Approver deploys as a single CDK stack (`ApproverStack`) containing:
 - **Inbound Events**: `LeaseRequested`, `AccountCleanupSucceeded` from ISB EventBridge
 - **Outbound**: Direct Lambda invocation of ISB Leases Lambda for approve/deny actions
 - **Data Access**: Reads ISB DynamoDB tables (Leases, Accounts) for user/org history
-- **ISB Client**: Uses `@co-cddo/isb-client` npm package for typed API calls
+- **ISB Client**: Uses `@co-cddo/isb-client` v2.0.3 npm package for typed API calls
+
+### AWS Identity Center (Pre-Approval)
+- **Cross-account**: Hub account Lambda assumes `ApproverIdentityCenterReadRole` in management account (955063685555) via STS
+- **Identity Store**: Queries Identity Store (`d-9267e1e371`) in us-west-2 for user lookup and group membership check
+- **Group**: `ndx-IsbPreapprovedGroup` -- membership grants -100 scoring bonus (automatic approval)
+- **Permissions**: `identitystore:ListUsers`, `identitystore:IsMemberInGroups` (granted via cross-account role)
+- **Fail-closed**: Any error in the Identity Store flow results in the user not being pre-approved; normal scoring proceeds
 
 ### Amazon Bedrock
 - **Model**: Amazon Nova Micro (`us.amazon.nova-micro-v1:0`)
@@ -236,7 +314,7 @@ The Approver deploys as a single CDK stack (`ApproverStack`) containing:
 | Component | Technology |
 |-----------|------------|
 | Runtime | Node.js 20, TypeScript 5.7 (strict mode) |
-| Infrastructure | AWS CDK v2.170+ |
+| Infrastructure | AWS CDK v2.240+ |
 | Build | esbuild (CJS output, externalize AWS SDK) |
 | Testing | Vitest with 800+ tests |
 | Validation | Zod schemas for event parsing |
@@ -260,10 +338,10 @@ The repository contains 800+ tests organized across:
 - `test/state-machine/` - Orchestrator and handler state transition tests
 - `test/lib/` - Utility function tests (business hours, circuit breaker, domain verification, email analysis)
 - `test/handlers/` - Slack approve/deny handler tests
-- `test/services/` - AWS service integration tests (DynamoDB, SQS, Bedrock, SNS)
+- `test/services/` - AWS service integration tests (DynamoDB, SQS, Bedrock, SNS, Identity Store)
 - `cdk/test/` - CDK infrastructure assertion tests
 
 **Source**: `test/` directory (28+ test files), `cdk/test/` directory
 
 ---
-*Generated from source analysis of `innovation-sandbox-on-aws-approver` at SHA `be062e7`. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*
+*Generated from source analysis of `innovation-sandbox-on-aws-approver` at SHA `cb27fa3`. See [00-repo-inventory.md](./00-repo-inventory.md) for full inventory.*

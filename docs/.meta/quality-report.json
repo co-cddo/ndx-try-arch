@@ -1,13 +1,13 @@
 {
   "$schema": "quality-report.schema.json",
-  "generatedAt": "2026-03-02T23:44:37.858050+00:00",
+  "generatedAt": "2026-03-06T19:20:00+00:00",
   "promptVersion": "2.0",
   "summary": {
-    "totalDocuments": 37,
-    "passedDocuments": 37,
+    "totalDocuments": 38,
+    "passedDocuments": 38,
     "failedDocuments": 0,
-    "totalWords": 65768,
-    "totalDiagrams": 115,
+    "totalWords": 66568,
+    "totalDiagrams": 117,
     "overallScore": 100.0
   },
   "documentResults": {
@@ -196,6 +196,19 @@
     "24-utils.md": {
       "passed": true,
       "wordCount": 1368,
+      "diagramCount": 2,
+      "gates": {
+        "structure": {
+          "passed": true
+        },
+        "content": {
+          "passed": true
+        }
+      }
+    },
+    "25-ou-metrics.md": {
+      "passed": true,
+      "wordCount": 800,
       "diagramCount": 2,
       "gates": {
         "structure": {

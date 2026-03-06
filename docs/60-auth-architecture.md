@@ -1,6 +1,6 @@
 # Auth Architecture
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Sources**: `innovation-sandbox-on-aws` (auth-api.ts, rest-api-all.ts, authorizer-handler.ts, authorization.ts, authorization-map.ts, sso-handler, jwt.ts), `.state/scps/*.json`
 
 ## Executive Summary

@@ -1,8 +1,8 @@
 # Signup Flow
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [https://github.com/co-cddo/ndx](https://github.com/co-cddo/ndx)
-> **Captured SHA**: `a5bf368`
+> **Captured SHA**: `b846188`
 
 ## Executive Summary
 

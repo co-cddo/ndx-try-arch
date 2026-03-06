@@ -1,8 +1,8 @@
 # Cost Tracking
 
-> **Last Updated**: 2026-03-02
+> **Last Updated**: 2026-03-06
 > **Source**: [innovation-sandbox-on-aws-costs](https://github.com/co-cddo/innovation-sandbox-on-aws-costs)
-> **Captured SHA**: `cf659bb`
+> **Captured SHA**: `c8f0523`
 
 ## Executive Summary
 
