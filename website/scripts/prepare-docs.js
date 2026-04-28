@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Prepares docs for Docusaurus by:
- * 1. Copying from ../docs/ to ./docs/
+ * 1. Copying from ../docs/ to ./docs/ (recursively, preserving subdirectories)
  * 2. Adding frontmatter (id, title, sidebar_position)
  * 3. Escaping MDX special characters
  */
@@ -38,13 +38,17 @@ function extractPosition(filename) {
   return 999;
 }
 
-// Generate document ID from filename
-function extractId(filename) {
-  if (filename === 'README.md') {
-    return 'index';
-  }
-  // Keep the number prefix to ensure unique IDs (e.g., "00-index" not "index")
-  return filename.replace(/\.md$/, '');
+// Generate document ID from filename and relative directory.
+// IDs must be unique across the docs tree but cannot contain slashes
+// (Docusaurus rejects them in frontmatter ids), so we join the relative
+// directory and leaf with hyphens. The route URL is derived from the
+// file's path on disk and is unaffected by this id.
+function extractId(filename, relativeDir) {
+  const base = filename === 'README.md'
+    ? 'index'
+    : filename.replace(/\.md$/, '');
+  if (!relativeDir) return base;
+  return `${relativeDir.replace(/[\\/]+/g, '-')}-${base}`;
 }
 
 // Escape MDX special characters in content (but not in code blocks)
@@ -89,34 +93,50 @@ function hasFrontmatter(content) {
   return content.startsWith('---\n');
 }
 
-// Process a single markdown file
-function processFile(filename) {
-  const sourcePath = path.join(SOURCE_DIR, filename);
-  const targetPath = path.join(TARGET_DIR, filename);
+// Process a single markdown file. `relativeDir` is the path of the file's
+// containing directory relative to SOURCE_DIR (empty string for top-level).
+function processFile(filename, relativeDir) {
+  const sourcePath = path.join(SOURCE_DIR, relativeDir, filename);
+  const targetDir = path.join(TARGET_DIR, relativeDir);
+  const targetPath = path.join(targetDir, filename);
+
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
 
   let content = fs.readFileSync(sourcePath, 'utf8');
 
   // Skip if already has frontmatter (shouldn't happen with clean source)
   if (hasFrontmatter(content)) {
-    console.log(`  Skipping ${filename} (already has frontmatter)`);
+    console.log(`  Skipping ${path.join(relativeDir, filename)} (already has frontmatter)`);
     fs.writeFileSync(targetPath, content);
     return;
   }
 
-  const id = extractId(filename);
   const title = extractTitle(content, filename);
   const position = extractPosition(filename);
 
-  // Build frontmatter
-  const frontmatter = [
-    '---',
-    `id: ${id}`,
+  // Build frontmatter. We only set an explicit `id` for top-level docs,
+  // where it preserves backward-compatible URLs and matches the existing
+  // sidebar ordering. For nested docs we omit `id` entirely so that
+  // Docusaurus derives both the id and the route from the file path,
+  // giving stable URLs like `/docs/adr/0001-aws-identity-center` without
+  // any need to encode the directory in the id (which Docusaurus rejects
+  // when it contains slashes).
+  const frontmatter = ['---'];
+  if (relativeDir === '') {
+    const id = extractId(filename, relativeDir);
+    frontmatter.push(`id: ${id}`);
+  }
+  frontmatter.push(
     `title: "${title.replace(/"/g, '\\"')}"`,
     `sidebar_position: ${position}`,
-  ];
+  );
 
-  // Add slug for README to make it the index
-  if (filename === 'README.md') {
+  // Add slug for the top-level README to make it the docs index. Nested
+  // README/index files become the index of their containing folder
+  // automatically.
+  if (filename === 'README.md' && relativeDir === '') {
     frontmatter.push('slug: /');
   }
 
@@ -129,7 +149,24 @@ function processFile(filename) {
   const output = frontmatter.join('\n') + content;
 
   fs.writeFileSync(targetPath, output);
-  console.log(`  Processed ${filename} -> id: ${id}, position: ${position}`);
+  console.log(`  Processed ${path.join(relativeDir, filename)} -> position: ${position}`);
+}
+
+// Walk the source tree, processing every markdown file we find. Skips
+// dotfiles and dot-directories so that `docs/.meta/` and similar provenance
+// folders are left alone.
+function walk(relativeDir) {
+  const dir = path.join(SOURCE_DIR, relativeDir);
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+    .filter(e => !e.name.startsWith('.'));
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      walk(path.join(relativeDir, entry.name));
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      processFile(entry.name, relativeDir);
+    }
+  }
 }
 
 // Main
@@ -144,14 +181,7 @@ function main() {
   }
   fs.mkdirSync(TARGET_DIR, { recursive: true });
 
-  // Get all markdown files
-  const files = fs.readdirSync(SOURCE_DIR)
-    .filter(f => f.endsWith('.md') && !f.startsWith('.'));
-
-  console.log(`  Found ${files.length} markdown files`);
-
-  // Process each file
-  files.forEach(processFile);
+  walk('');
 
   console.log('Done!');
 }
