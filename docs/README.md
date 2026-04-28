@@ -104,6 +104,9 @@ The documentation is organized into 10 phases:
 - Process flows
 - Navigation indexes
 
+### Architecture Decisions (ADRs)
+- See [./adr/README.md](./adr/README.md) — hand-maintained decision records sitting outside the auto-generation pipeline.
+
 ---
 
 ## Key Architectural Patterns
